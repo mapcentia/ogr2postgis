@@ -1,3 +1,0 @@
-/home/mh/Source/ogr2postgis/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/home/mh/Source/ogr2postgis/cmake-build-debug/CMakeFiles/ogr2postgis.dir
-/home/mh/Source/ogr2postgis/cmake-build-debug/CMakeFiles/edit_cache.dir
