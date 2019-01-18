@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/ogr2postgis.dir/main.cpp.o  -o ogr2postgis -lgdal -lstdc++fs 
