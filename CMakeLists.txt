@@ -3,6 +3,7 @@ project(ogr2postgis)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(ogr2postgis main.cpp)
+add_executable(ogr2postgis src/ogr2postgis.cpp)
+include_directories(/usr/include/gdal)
 
 target_link_libraries(ogr2postgis gdal stdc++fs)
