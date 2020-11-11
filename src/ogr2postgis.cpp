@@ -80,7 +80,6 @@ int main(int argc, char *argv[]) {
     // optind is for the extra arguments
     // which are not parsed
     for (; optind < argc; optind++) {
-        printf("path: %s\n", argv[optind]);
         path = argv[optind];
     }
 
@@ -118,6 +117,7 @@ void start(const char *path) {
     const int maxFeatures{1};
     string file;
     string fileExtension;
+    int countf = 0;
     vector<string> extensions = {".tab", ".shp", ".gml", ".geojson", ".json"};
 
     for (auto &p: fs::recursive_directory_iterator(path)) {
@@ -125,9 +125,7 @@ void start(const char *path) {
         fileExtension = p.path().extension();
 
         if (caseInsCompare(fileExtension, extensions)) {
-
-            cout << file.c_str() << " ";
-
+            countf++;
             auto poDS = static_cast<GDALDataset *>(  GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr,
                                                                 nullptr));
             if (poDS == nullptr) {
@@ -137,24 +135,31 @@ void start(const char *path) {
 
             OGRSpatialReference *projection;
             char *wktString;
-            const char *authorityName = "";
-            const char *authorityCode = "";
-            //const OGRSpatialReference *reference = poDS->GetLayer(0)->GetLayerDefn()->OGRFeatureDefn::GetGeomFieldDefn(0)->GetSpatialRef();
+            const char *authorityName;
+            const char *authorityCode;
+            const char *hasWkt = "True";
+            const char *driverName = poDS->GetDriverName();
+            char authStr[100];
             const OGRSpatialReference *reference = poDS->GetLayer(0)->GetSpatialRef();
             if (reference != nullptr) {
                 projection = poDS->GetLayer(0)->GetLayerDefn()->OGRFeatureDefn::GetGeomFieldDefn(0)->GetSpatialRef();
                 projection->exportToWkt(&wktString);
-                authorityName = projection->GetAuthorityName(NULL);
-                if (authorityName == NULL) {
-                    authorityName = "";
-                }
-                authorityCode = projection->GetAuthorityCode(NULL);
-                if (authorityCode == NULL) {
-                    authorityCode = "Na";
+                authorityName = projection->GetAuthorityName(nullptr);
+                authorityCode = projection->GetAuthorityCode(nullptr);
+                if (authorityName != nullptr && authorityCode != nullptr) {
+                    const char *sep = ":";
+                    strcpy(authStr, authorityName);
+                    strcat(authStr, sep);
+                    strcat(authStr, authorityCode);
+                } else {
+
+                    strcpy(authStr, "-");
                 }
             } else {
                 authorityName = "";
                 authorityCode = "Na";
+                hasWkt = "False";
+                strcpy(authStr, "-");
             }
 
             int layerCount = poDS->GetLayerCount();
@@ -192,11 +197,7 @@ void start(const char *path) {
                     }
                 }
 
-                std::cout << poDS->GetLayer(0)->GetName()
-                <<" Type:" << type
-                << " Projection: " << authorityName << ":" << authorityCode
-                <<" Feature count: " << featureCount;
-                std::cout << std::endl;
+                printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, driverName, 8, featureCount, -14, type,  3, layerCount, -30, poDS->GetLayer(0)->GetName(), 10, hasWkt, -12, authStr, file.c_str());
 
                 OGRFeature::DestroyFeature(poFeature);
 
@@ -236,6 +237,7 @@ void start(const char *path) {
             GDALClose(poDS);
         }
     }
+    printf("Total %i\n", countf);
 }
 
 bool caseInsCompare(const string &s1, vector<string> s2) {
@@ -260,7 +262,7 @@ bool translate(const char *pszFilename, char **argv, const char *encoding, char 
     GDALDatasetH TestDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx("PG:host=127.0.0.1 user=gc2 password=1234 dbname=dk", GDAL_OF_VECTOR,
                                    nullptr, nullptr, nullptr);
-    if (pgDs == NULL) {
+    if (pgDs == nullptr) {
         exit(1);
     }
 
