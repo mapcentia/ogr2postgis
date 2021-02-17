@@ -124,7 +124,7 @@ void help(const char *programName) {
 void start(const char *path) {
     string file;
     string fileExtension;
-    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json"}};
+    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg"}};
     try {
         for (auto &p: fs::recursive_directory_iterator(path)) {
             file = p.path().string();
@@ -140,7 +140,7 @@ void start(const char *path) {
         };
         open(path);
     }
-    printf("Total %i\n", countf);
+    printf("\nTotal %i\n", countf);
     printf("%s\n", GDALVersionInfo("--version"));
 }
 
@@ -223,17 +223,17 @@ void open(basic_string<char> file) {
         }
 
         printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, driverName, 8, featureCount, -14, type, 3,
-               layerCount,
+               i + 1,
                -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, file.c_str());
+        if (import) {
+            if (translate(file.c_str(), "UTF8", poDS->GetLayer(i)->GetName(), featureCount, wktString, type, authStr) ==
+                FALSE) {
+                translate(file.c_str(), "LATIN1", poDS->GetLayer(i)->GetName(), featureCount, wktString, type, authStr);
+            };
+        }
 
         OGRFeature::DestroyFeature(poFeature);
 
-        if (import) {
-            if (translate(file.c_str(), "UTF8", layer->GetName(), featureCount, wktString, type, authStr) ==
-                FALSE) {
-                translate(file.c_str(), "LATIN1", layer->GetName(), featureCount, wktString, type, authStr);
-            };
-        }
     }
     GDALClose(poDS);
 }
@@ -260,7 +260,9 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
     strcat(buf, encoding);
     putenv(buf);
 
+    char **papszOptions = nullptr;
     char **argv{nullptr};
+
     const char *targetSrs = reinterpret_cast<const char *>(wktString != nullptr ? wktString : s_srs);
     if (targetSrs == nullptr) {
         std::cout << "   Can't impoort without source srs" << std::endl;
@@ -291,16 +293,20 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
     strcat(schemaQualifiedName, layerName); // append string two to the result.
 
     argv = CSLAddString(argv, schemaQualifiedName);
-    GDALDatasetH TestDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+    argv = CSLAddString(argv, layerName);
+
+    GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_VECTOR,
                                    nullptr, nullptr, nullptr);
+    auto *test = (GDALDataset *) sourceDs;
+
     if (pgDs == nullptr) {
         exit(1);
     }
 
     int bUsageError{FALSE};
     GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
-    auto *dst = (GDALDataset *) GDALVectorTranslate(nullptr, pgDs, 1, &TestDs, opt, &bUsageError);
+    auto *dst = (GDALDataset *) GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError);
 
     if (dst == nullptr) {
         std::cout << "ERROR!" << std::endl;
