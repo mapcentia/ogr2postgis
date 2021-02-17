@@ -17,7 +17,9 @@ bool caseInsCompare(const string &s1, vector<string> s2);
 bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, char *wktString,
                const char *type, char string1[100]);
 
-void start(char const *path, bool import);
+void start(char const *path);
+
+void open(basic_string<char> file);
 
 static void help(const char *programName);
 
@@ -25,12 +27,14 @@ const char *connection;
 const char *t_srs{nullptr};
 const char *s_srs{nullptr};
 const char *schema{"public"};
+int countf{0};
+bool import{false};
+const int maxFeatures{1};
 
 int main(int argc, char *argv[]) {
     int opt;
     int long_index{0};
     const char *programName{argv[0]};
-    bool import{false};
     const char *path;
 
     if (argc > 1) {
@@ -90,7 +94,7 @@ int main(int argc, char *argv[]) {
     }
 
     GDALAllRegister();
-    start(path, import);
+    start(path);
 }
 
 void help(const char *programName) {
@@ -117,11 +121,9 @@ void help(const char *programName) {
 //    printf("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL;
 }
 
-void start(const char *path, bool import) {
-    const int maxFeatures{1};
+void start(const char *path) {
     string file;
     string fileExtension;
-    int countf{0};
     vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json"}};
     try {
         for (auto &p: fs::recursive_directory_iterator(path)) {
@@ -129,104 +131,111 @@ void start(const char *path, bool import) {
             fileExtension = p.path().extension();
 
             if (caseInsCompare(fileExtension, extensions)) {
-                countf++;
-                GDALDataset *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
-                if (poDS == nullptr) {
-                    printf("Open failed.\n");
-                    exit(1);
-                }
 
-                OGRSpatialReference *projection;
-                char *wktString{nullptr};
-                const char *authorityName;
-                const char *authorityCode;
-                const char *hasWkt{"True"};
-                const char *driverName{poDS->GetDriverName()};
-                char authStr[100];
-                int layerCount{poDS->GetLayerCount()};
-                OGRLayer *layer{poDS->GetLayer(0)};
-                const OGRSpatialReference *reference = layer->GetSpatialRef();
-                if (reference != nullptr) {
-                    projection = layer->GetLayerDefn()->OGRFeatureDefn::GetGeomFieldDefn(0)->GetSpatialRef();
-                    projection->exportToWkt(&wktString);
-                    authorityName = projection->GetAuthorityName(nullptr);
-                    authorityCode = projection->GetAuthorityCode(nullptr);
-                    if (authorityName != nullptr && authorityCode != nullptr) {
-                        const char *sep{":"};
-                        strcpy(authStr, authorityName);
-                        strcat(authStr, sep);
-                        strcat(authStr, authorityCode);
-                    } else {
-                        strcpy(authStr, "-");
-                    }
-                } else {
-                    authorityName = "";
-                    authorityCode = "Na";
-                    hasWkt = "False";
-                    strcpy(authStr, "-");
-                }
-
-                // Count features
-                GIntBig featureCount = layer->GetFeatureCount(1);
-
-                int count{0};
-                OGRFeature *poFeature;
-                while ((poFeature = layer->GetNextFeature()) != nullptr) {
-                    OGRGeometry *poGeometry = poFeature->GetGeometryRef();
-                    const char *type;
-                    if (poGeometry != nullptr) {
-                        switch (wkbFlatten(poGeometry->getGeometryType())) {
-                            case 1:
-                                type = "point";
-                                break;
-                            case 2:
-                                type = "linestring";
-                                break;
-                            case 3:
-                                type = "polygon";
-                                break;
-                            case 4:
-                                type = "multipoint";
-                                break;
-                            case 5:
-                                type = "multilinestring";
-                                break;
-                            case 6:
-                                type = "multipolygon";
-                        }
-                    }
-
-                    printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, driverName, 8, featureCount, -14, type, 3,
-                           layerCount,
-                           -30, poDS->GetLayer(0)->GetName(), 10, hasWkt, -12, authStr, file.c_str());
-
-                    OGRFeature::DestroyFeature(poFeature);
-
-                    if (import) {
-                        if (translate(file.c_str(), "UTF8", layer->GetName(), featureCount, wktString, type, authStr) ==
-                            FALSE) {
-                            translate(file.c_str(), "LATIN1", layer->GetName(), featureCount, wktString, type, authStr);
-                        };
-                    }
-
-                    count++;
-
-                    if (count == maxFeatures || count == featureCount) {
-                        std::cout << std::endl;
-                        break;
-                    } else {
-                        continue;
-                    }
-                }
-                GDALClose(poDS);
+                open(file);
             }
         }
     } catch (const std::exception &e) {
-        printf("ERROR: Could not recursive iterate the given directory.\n");
-        exit(1);
+        if (!std::experimental::filesystem::exists(path)) {
+
+            printf("ERROR: Could not open directory or file.\n");
+            exit(1);
+        };
+        open(path);
     }
     printf("Total %i\n", countf);
     printf("%s\n", GDALVersionInfo("--version"));
+}
+void open(basic_string<char> file){
+    countf++;
+    GDALDataset *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+    if (poDS == nullptr) {
+        printf("Open failed.\n");
+        exit(1);
+    }
+    OGRSpatialReference *projection;
+    char *wktString{nullptr};
+    const char *authorityName;
+    const char *authorityCode;
+    const char *hasWkt{"True"};
+    const char *driverName{poDS->GetDriverName()};
+    char authStr[100];
+    int layerCount{poDS->GetLayerCount()};
+    OGRLayer *layer{poDS->GetLayer(0)};
+    const OGRSpatialReference *reference = layer->GetSpatialRef();
+    if (reference != nullptr) {
+        projection = layer->GetLayerDefn()->OGRFeatureDefn::GetGeomFieldDefn(0)->GetSpatialRef();
+        projection->exportToWkt(&wktString);
+        authorityName = projection->GetAuthorityName(nullptr);
+        authorityCode = projection->GetAuthorityCode(nullptr);
+        if (authorityName != nullptr && authorityCode != nullptr) {
+            const char *sep{":"};
+            strcpy(authStr, authorityName);
+            strcat(authStr, sep);
+            strcat(authStr, authorityCode);
+        } else {
+            strcpy(authStr, "-");
+        }
+    } else {
+        authorityName = "";
+        authorityCode = "Na";
+        hasWkt = "False";
+        strcpy(authStr, "-");
+    }
+
+    // Count features
+    GIntBig featureCount = layer->GetFeatureCount(1);
+
+    int count{0};
+    OGRFeature *poFeature;
+    while ((poFeature = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry *poGeometry = poFeature->GetGeometryRef();
+        const char *type;
+        if (poGeometry != nullptr) {
+            switch (wkbFlatten(poGeometry->getGeometryType())) {
+                case 1:
+                    type = "point";
+                    break;
+                case 2:
+                    type = "linestring";
+                    break;
+                case 3:
+                    type = "polygon";
+                    break;
+                case 4:
+                    type = "multipoint";
+                    break;
+                case 5:
+                    type = "multilinestring";
+                    break;
+                case 6:
+                    type = "multipolygon";
+            }
+        }
+
+        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, driverName, 8, featureCount, -14, type, 3,
+               layerCount,
+               -30, poDS->GetLayer(0)->GetName(), 10, hasWkt, -12, authStr, file.c_str());
+
+        OGRFeature::DestroyFeature(poFeature);
+
+        if (import) {
+            if (translate(file.c_str(), "UTF8", layer->GetName(), featureCount, wktString, type, authStr) ==
+                FALSE) {
+                translate(file.c_str(), "LATIN1", layer->GetName(), featureCount, wktString, type, authStr);
+            };
+        }
+
+        count++;
+
+        if (count == maxFeatures || count == featureCount) {
+            std::cout << std::endl;
+            break;
+        } else {
+            continue;
+        }
+    }
+    GDALClose(poDS);
 }
 
 bool caseInsCompare(const string &s1, vector<string> s2) {
