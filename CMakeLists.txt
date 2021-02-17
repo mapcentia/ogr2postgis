@@ -7,3 +7,5 @@ add_executable(ogr2postgis src/ogr2postgis.cpp)
 include_directories(/usr)
 
 target_link_libraries(ogr2postgis gdal stdc++fs)
+
+install(TARGETS ogr2postgis DESTINATION bin)
