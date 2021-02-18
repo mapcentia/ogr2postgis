@@ -222,9 +222,9 @@ void open(basic_string<char> file) {
             }
         }
 
-        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, driverName, 8, featureCount, -14, type, 3,
+        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -14, type, 3,
                i + 1,
-               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, file.c_str());
+               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0? file.c_str() : "");
         if (import) {
             if (translate(file.c_str(), "UTF8", poDS->GetLayer(i)->GetName(), featureCount, wktString, type, authStr) ==
                 FALSE) {
@@ -322,7 +322,7 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
             GDALClose(dst);
             return FALSE;
         }
-        std::cout << "   Imported" << std::endl;
+        std::cout << "   Imported";
         GDALVectorTranslateOptionsFree(opt);
         GDALClose(dst);
         CSLDestroy(argv);
