@@ -12,20 +12,21 @@ namespace fs = experimental::filesystem;
 
 inline bool caseInsCharCompareN(char a, char b);
 
-bool caseInsCompare(const string &s1, vector<string> s2);
+bool caseInsCompare(const string &s1, const vector<string>& s2);
 
-bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, char *wktString,
-               const char *type, char string1[100]);
+bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+               const char *type, char authStr[100], int leyerIndex);
 
 void start(char const *path);
 
-void open(basic_string<char> file);
+void open(const basic_string<char>& file);
 
 static void help(const char *programName);
 
 const char *connection;
 const char *t_srs{nullptr};
 const char *s_srs{nullptr};
+const char *nln{nullptr};
 const char *schema{"public"};
 int countf{0};
 bool import{false};
@@ -50,11 +51,12 @@ int main(int argc, char *argv[]) {
             {"schema",     required_argument, nullptr, 'o'},
             {"t_srs",      required_argument, nullptr, 't'},
             {"s_srs",      required_argument, nullptr, 's'},
+            {"nln",        required_argument, nullptr, 'n'},
             {"import",     no_argument,       nullptr, 'i'},
             {"help",       no_argument,       nullptr, '?'},
             {nullptr, 0,                      nullptr, 0}
     };
-    while ((opt = getopt_long(argc, argv, "c:o:t:s:i:", long_options, &long_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:", long_options, &long_index)) != -1) {
         switch (opt) {
             case 'c':
                 printf("connection: %s\n", optarg);
@@ -71,6 +73,10 @@ int main(int argc, char *argv[]) {
             case 's':
                 printf("s_srs: %s\n", optarg);
                 s_srs = optarg;
+                break;
+            case 'n':
+                printf("nln: %s\n", optarg);
+                nln = optarg;
                 break;
             case 'i':
                 printf("import\n");
@@ -104,13 +110,14 @@ void help(const char *programName) {
     printf("  %s [OPTION]... [DIRECTORY]\n", programName);
 
     printf("\nGeneral options:\n");
-    printf("  -?, --help                    show this help, then exit\n");
+    printf("  -?, --help                    Show this help, then exit\n");
 
     printf("\nOptions controlling the import to postgis:\n");
-    printf("  -i, --import                  do import into postgis\n");
-    printf("  -o, --schema                  output schema, Defaults to public\n");
-    printf("  -s, --s_srs                   fallback source SRS.\n");
-    printf("  -t, --t_srs                   fallback target SRS. Defaults to EPSG:4326\n");
+    printf("  -i, --import                  Optional. Do import into postgis\n");
+    printf("  -o, --schema                  Optional. Output schema, Defaults to public\n");
+    printf("  -s, --s_srs                   Optional. Fallback source SRS. Will be used if no authority name/code is available.\n");
+    printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326\n");
+    printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories.\n");
 
     printf("\nConnection options:\n");
     printf("  -c, --connection=PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"\n");
@@ -127,6 +134,10 @@ void start(const char *path) {
     vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg"}};
     try {
         for (auto &p: fs::recursive_directory_iterator(path)) {
+            if (nln && import) {
+                printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
+                exit(1);
+            }
             file = p.path().string();
             fileExtension = p.path().extension();
             if (caseInsCompare(fileExtension, extensions)) {
@@ -144,9 +155,9 @@ void start(const char *path) {
     printf("%s\n", GDALVersionInfo("--version"));
 }
 
-void open(basic_string<char> file) {
+void open(const basic_string<char>& file) {
     countf++;
-    GDALDataset *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+    auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     if (poDS == nullptr) {
         printf("Open failed.\n");
         exit(1);
@@ -156,8 +167,10 @@ void open(basic_string<char> file) {
     const char *authorityName;
     const char *authorityCode;
     const char *hasWkt{"True"};
+    const char *layerName;
     const char *driverName{poDS->GetDriverName()};
     char authStr[100];
+    char layerNameBuf[100];
     int layerCount{poDS->GetLayerCount()};
 
     for (int i = 0; i < layerCount; i++) {
@@ -224,11 +237,12 @@ void open(basic_string<char> file) {
 
         printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -14, type, 3,
                i + 1,
-               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0? file.c_str() : "");
+               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0 ? file.c_str() : "");
         if (import) {
-            if (translate(file.c_str(), "UTF8", poDS->GetLayer(i)->GetName(), featureCount, wktString, type, authStr) ==
+            layerName = poDS->GetLayer(i)->GetName();
+            if (translate(file.c_str(), "UTF8", layerName, featureCount, wktString, type, authStr, i) ==
                 FALSE) {
-                translate(file.c_str(), "LATIN1", poDS->GetLayer(i)->GetName(), featureCount, wktString, type, authStr);
+                translate(file.c_str(), "LATIN1", layerName, featureCount, wktString, type, authStr, i);
             };
         }
 
@@ -238,7 +252,7 @@ void open(basic_string<char> file) {
     GDALClose(poDS);
 }
 
-bool caseInsCompare(const string &s1, vector<string> s2) {
+bool caseInsCompare(const string &s1, const vector<string>& s2) {
     for (string text : s2) {
         if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
             return true;
@@ -250,15 +264,27 @@ bool caseInsCharCompareN(char a, char b) {
     return (toupper(a) == toupper(b));
 }
 
-bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, char *wktString,
-               const char *type, char authStr[100]) {
+bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+               const char *type, char authStr[100], int layerIndex) {
 
     // Set client encoding with a env
+    const char *altName{layerName};
     const char *one{"PGCLIENTENCODING="};
     char buf[100];
+    char altNameBuf[100];
     strcpy(buf, one);
     strcat(buf, encoding);
     putenv(buf);
+
+    if (nln) {
+        altName = nln;
+        if (layerIndex > 0) {
+            strcpy(altNameBuf, altName);
+            strcat(altNameBuf, "_");
+            strcat(altNameBuf, to_string(layerIndex).c_str());
+            altName = altNameBuf;
+        }
+    }
 
     char **papszOptions = nullptr;
     char **argv{nullptr};
@@ -286,11 +312,10 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
                         reinterpret_cast<const char *>(strcmp(authStr, "-") != 0 ? authStr : t_srs != nullptr ? t_srs
                                                                                                               : "EPSG:4326")); // Convert to this
     argv = CSLAddString(argv, "-nln");
-
     char schemaQualifiedName[100];   // array to hold the result.
     strcpy(schemaQualifiedName, schema); // copy string one into the result.
     strcat(schemaQualifiedName, "."); // copy string one into the result.
-    strcat(schemaQualifiedName, layerName); // append string two to the result.
+    strcat(schemaQualifiedName, altName); // append string two to the result.
 
     argv = CSLAddString(argv, schemaQualifiedName);
     argv = CSLAddString(argv, layerName);
