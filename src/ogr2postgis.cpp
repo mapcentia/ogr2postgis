@@ -15,7 +15,7 @@ inline bool caseInsCharCompareN(char a, char b);
 bool caseInsCompare(const string &s1, const vector<string>& s2);
 
 bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
-               const char *type, char authStr[100], int leyerIndex);
+               std::string type, char authStr[100], int leyerIndex);
 
 void start(char const *path);
 
@@ -30,6 +30,7 @@ const char *nln{nullptr};
 const char *schema{"public"};
 int countf{0};
 bool import{false};
+bool p_multi{false};
 const int maxFeatures{1};
 
 int main(int argc, char *argv[]) {
@@ -53,10 +54,11 @@ int main(int argc, char *argv[]) {
             {"s_srs",      required_argument, nullptr, 's'},
             {"nln",        required_argument, nullptr, 'n'},
             {"import",     no_argument,       nullptr, 'i'},
+            {"p_multi",    no_argument,       nullptr, 'm'},
             {"help",       no_argument,       nullptr, '?'},
             {nullptr, 0,                      nullptr, 0}
     };
-    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:", long_options, &long_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:p:", long_options, &long_index)) != -1) {
         switch (opt) {
             case 'c':
                 printf("connection: %s\n", optarg);
@@ -81,6 +83,11 @@ int main(int argc, char *argv[]) {
             case 'i':
                 printf("import\n");
                 import = true;
+                optind--;
+                break;
+            case 'p':
+                printf("promote\n");
+                p_multi = true;
                 optind--;
                 break;
             default:
@@ -118,6 +125,7 @@ void help(const char *programName) {
     printf("  -s, --s_srs                   Optional. Fallback source SRS. Will be used if no authority name/code is available.\n");
     printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326\n");
     printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories.\n");
+    printf("  -p, --p_multi                 Optional. Promote single geometries to multi part.\n");
 
     printf("\nConnection options:\n");
     printf("  -c, --connection=PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"\n");
@@ -131,25 +139,30 @@ void help(const char *programName) {
 void start(const char *path) {
     string file;
     string fileExtension;
-    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg"}};
-    try {
-        for (auto &p: fs::recursive_directory_iterator(path)) {
-            if (nln && import) {
-                printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
+    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg", ".gdb"}};
+    std::string s(path);
+    if (s.find(".gdb") != string::npos) {
+        open(std::string(path));
+    } else {
+        try {
+            for (auto &p: fs::recursive_directory_iterator(path)) {
+                if (nln && import) {
+                    printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
+                    exit(1);
+                }
+                file = p.path().string();
+                fileExtension = p.path().extension();
+                if (caseInsCompare(fileExtension, extensions)) {
+                    open(file);
+                }
+            }
+        } catch (const std::exception &e) {
+            if (!std::experimental::filesystem::exists(path)) {
+                printf("ERROR: Could not open directory or file.\n");
                 exit(1);
-            }
-            file = p.path().string();
-            fileExtension = p.path().extension();
-            if (caseInsCompare(fileExtension, extensions)) {
-                open(file);
-            }
+            };
+            open(path);
         }
-    } catch (const std::exception &e) {
-        if (!std::experimental::filesystem::exists(path)) {
-            printf("ERROR: Could not open directory or file.\n");
-            exit(1);
-        };
-        open(path);
     }
     printf("\nTotal %i\n", countf);
     printf("%s\n", GDALVersionInfo("--version"));
@@ -200,7 +213,7 @@ void open(const basic_string<char>& file) {
         GIntBig featureCount = layer->GetFeatureCount(1);
 
         int count{0};
-        const char *type;
+        std::string type;
         OGRFeature *poFeature;
         while ((poFeature = layer->GetNextFeature()) != nullptr) {
             OGRGeometry *poGeometry = poFeature->GetGeometryRef();
@@ -235,7 +248,7 @@ void open(const basic_string<char>& file) {
             }
         }
 
-        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -14, type, 3,
+        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -14, type.c_str(), 3,
                i + 1,
                -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0 ? file.c_str() : "");
         if (import) {
@@ -265,8 +278,7 @@ bool caseInsCharCompareN(char a, char b) {
 }
 
 bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
-               const char *type, char authStr[100], int layerIndex) {
-
+               std::string type, char authStr[100], int layerIndex) {
     // Set client encoding with a env
     const char *altName{layerName};
     const char *one{"PGCLIENTENCODING="};
@@ -284,6 +296,10 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
             strcat(altNameBuf, to_string(layerIndex).c_str());
             altName = altNameBuf;
         }
+    }
+
+    if ((type == "point"|| type == "linestring" || type == "polygon") && p_multi) {
+        type = "multi" + type;
     }
 
     char **papszOptions = nullptr;
@@ -304,7 +320,7 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "PRECISION=NO");
     argv = CSLAddString(argv, "-nlt");
-    argv = CSLAddString(argv, type);
+    argv = CSLAddString(argv, type.c_str());
     argv = CSLAddString(argv, "-s_srs"); // source projection
     argv = CSLAddString(argv, targetSrs);
     argv = CSLAddString(argv, "-t_srs");
@@ -323,7 +339,6 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
     GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_VECTOR,
                                    nullptr, nullptr, nullptr);
-    auto *test = (GDALDataset *) sourceDs;
 
     if (pgDs == nullptr) {
         exit(1);
