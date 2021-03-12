@@ -12,14 +12,15 @@ namespace fs = experimental::filesystem;
 
 inline bool caseInsCharCompareN(char a, char b);
 
-bool caseInsCompare(const string &s1, const vector<string>& s2);
+bool caseInsCompare(const string &s1, const vector<string> &s2);
 
-bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
-               std::string type, char authStr[100], int leyerIndex);
+bool
+translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+          std::string type, char authStr[100], int leyerIndex);
 
 void start(char const *path);
 
-void open(const basic_string<char>& file);
+void open(const basic_string<char> &file);
 
 static void help(const char *programName);
 
@@ -31,6 +32,7 @@ const char *schema{"public"};
 int countf{0};
 bool import{false};
 bool p_multi{false};
+bool append{false};
 const int maxFeatures{1};
 
 int main(int argc, char *argv[]) {
@@ -55,10 +57,11 @@ int main(int argc, char *argv[]) {
             {"nln",        required_argument, nullptr, 'n'},
             {"import",     no_argument,       nullptr, 'i'},
             {"p_multi",    no_argument,       nullptr, 'm'},
+            {"append",     no_argument,       nullptr, 'a'},
             {"help",       no_argument,       nullptr, '?'},
             {nullptr, 0,                      nullptr, 0}
     };
-    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:p:", long_options, &long_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:p:a:", long_options, &long_index)) != -1) {
         switch (opt) {
             case 'c':
                 printf("connection: %s\n", optarg);
@@ -88,6 +91,11 @@ int main(int argc, char *argv[]) {
             case 'p':
                 printf("promote\n");
                 p_multi = true;
+                optind--;
+                break;
+            case 'a':
+                printf("append\n");
+                append = true;
                 optind--;
                 break;
             default:
@@ -126,6 +134,7 @@ void help(const char *programName) {
     printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326\n");
     printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories.\n");
     printf("  -p, --p_multi                 Optional. Promote single geometries to multi part.\n");
+    printf("  -a, --append                  Optional. Append to existing layer instead of creating new\n");
 
     printf("\nConnection options:\n");
     printf("  -c, --connection=PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"\n");
@@ -142,11 +151,11 @@ void start(const char *path) {
     vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg", ".gdb"}};
     std::string s(path);
     if (s.find(".gdb") != string::npos) {
-        open(std::string(path));
+        open(path);
     } else {
         try {
             for (auto &p: fs::recursive_directory_iterator(path)) {
-                if (nln && import) {
+                if (nln && import && !append) {
                     printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                     exit(1);
                 }
@@ -168,7 +177,7 @@ void start(const char *path) {
     printf("%s\n", GDALVersionInfo("--version"));
 }
 
-void open(const basic_string<char>& file) {
+void open(const basic_string<char> &file) {
     countf++;
     auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     if (poDS == nullptr) {
@@ -265,7 +274,7 @@ void open(const basic_string<char>& file) {
     GDALClose(poDS);
 }
 
-bool caseInsCompare(const string &s1, const vector<string>& s2) {
+bool caseInsCompare(const string &s1, const vector<string> &s2) {
     for (string text : s2) {
         if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
             return true;
@@ -277,8 +286,9 @@ bool caseInsCharCompareN(char a, char b) {
     return (toupper(a) == toupper(b));
 }
 
-bool translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
-               std::string type, char authStr[100], int layerIndex) {
+bool
+translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+          std::string type, char authStr[100], int layerIndex) {
     // Set client encoding with a env
     const char *altName{layerName};
     const char *one{"PGCLIENTENCODING="};
@@ -298,7 +308,7 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
         }
     }
 
-    if ((type == "point"|| type == "linestring" || type == "polygon") && p_multi) {
+    if ((type == "point" || type == "linestring" || type == "polygon") && p_multi) {
         type = "multi" + type;
     }
 
@@ -313,12 +323,17 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
     }
     argv = CSLAddString(argv, "-f");
     argv = CSLAddString(argv, "PostgreSQL");
+    if (append) {
+        argv = CSLAddString(argv, "-update");
+        argv = CSLAddString(argv, "-append");
+    }
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "FID=gid");
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "PRECISION=NO");
+
     argv = CSLAddString(argv, "-nlt");
     argv = CSLAddString(argv, type.c_str());
     argv = CSLAddString(argv, "-s_srs"); // source projection
@@ -328,17 +343,17 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
                         reinterpret_cast<const char *>(strcmp(authStr, "-") != 0 ? authStr : t_srs != nullptr ? t_srs
                                                                                                               : "EPSG:4326")); // Convert to this
     argv = CSLAddString(argv, "-nln");
-    char schemaQualifiedName[100];   // array to hold the result.
-    strcpy(schemaQualifiedName, schema); // copy string one into the result.
-    strcat(schemaQualifiedName, "."); // copy string one into the result.
-    strcat(schemaQualifiedName, altName); // append string two to the result.
+    argv = CSLAddString(argv, altName);
 
-    argv = CSLAddString(argv, schemaQualifiedName);
+
     argv = CSLAddString(argv, layerName);
 
+    papszOptions = CSLAddNameValue(papszOptions, "ACTIVE_SCHEMA", schema);
+
     GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
-    GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_VECTOR,
-                                   nullptr, nullptr, nullptr);
+    GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_UPDATE | GDAL_OF_VECTOR,
+                                   nullptr, papszOptions, nullptr);
+    CSLDestroy(papszOptions);
 
     if (pgDs == nullptr) {
         exit(1);
@@ -354,9 +369,9 @@ bool translate(const char *pszFilename, const char *encoding, const char *layerN
         GDALClose(dst);
         return TRUE;
     } else {
-        OGRLayer *layer = dst->GetLayerByName(schemaQualifiedName);
+        OGRLayer *layer = dst->GetLayerByName(altName);
 
-        if (layer->GetFeatureCount() != featureCount) {
+        if (layer->GetFeatureCount() != featureCount && !append) {
             std::cout << "Try again" << std::endl;
             GDALVectorTranslateOptionsFree(opt);
             GDALClose(dst);
