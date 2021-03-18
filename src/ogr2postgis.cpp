@@ -64,37 +64,29 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:p:a:", long_options, &long_index)) != -1) {
         switch (opt) {
             case 'c':
-                printf("connection: %s\n", optarg);
                 connection = optarg;
                 break;
             case 'o':
-                printf("schema: %s\n", optarg);
                 schema = optarg;
                 break;
             case 't':
-                printf("t_srs: %s\n", optarg);
                 t_srs = optarg;
                 break;
             case 's':
-                printf("s_srs: %s\n", optarg);
                 s_srs = optarg;
                 break;
             case 'n':
-                printf("nln: %s\n", optarg);
                 nln = optarg;
                 break;
             case 'i':
-                printf("import\n");
                 import = true;
                 optind--;
                 break;
             case 'p':
-                printf("promote\n");
                 p_multi = true;
                 optind--;
                 break;
             case 'a':
-                printf("append\n");
                 append = true;
                 optind--;
                 break;
@@ -119,22 +111,23 @@ int main(int argc, char *argv[]) {
 }
 
 void help(const char *programName) {
-    printf("%s Iterate recursive through a directory and prints info found geo-spatial vector file formats. Optional import files into to PostGIS\n\n",
+    printf("%s iterate recursive through a directory tree and prints info about found geo-spatial vector file formats. Optional import files into to a PostGIS database.\n",
            programName);
+    printf(" Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb\n\n");
     printf("Usage:\n");
-    printf("  %s [OPTION]... [DIRECTORY]\n", programName);
+    printf("  %s [OPTION]... [DIRECTORY|FILE]\n", programName);
 
     printf("\nGeneral options:\n");
     printf("  -?, --help                    Show this help, then exit\n");
 
     printf("\nOptions controlling the import to postgis:\n");
-    printf("  -i, --import                  Optional. Do import into postgis\n");
-    printf("  -o, --schema                  Optional. Output schema, Defaults to public\n");
-    printf("  -s, --s_srs                   Optional. Fallback source SRS. Will be used if no authority name/code is available.\n");
-    printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326\n");
-    printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories.\n");
+    printf("  -i, --import                  Optional. Import found files into PostgreSQL/PostGIS.\n");
+    printf("  -o, --schema                  Optional. Output PostgreSQL schema, Defaults to public.\n");
+    printf("  -s, --s_srs                   Optional. Fallback source SRS. Will be used if file doesn't contain projection information.\n");
+    printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326.\n");
+    printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories unless --append is used.\n");
     printf("  -p, --p_multi                 Optional. Promote single geometries to multi part.\n");
-    printf("  -a, --append                  Optional. Append to existing layer instead of creating new\n");
+    printf("  -a, --append                  Optional. Append to existing layer instead of creating new.\n");
 
     printf("\nConnection options:\n");
     printf("  -c, --connection=PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"\n");
