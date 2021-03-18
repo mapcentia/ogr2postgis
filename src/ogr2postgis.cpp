@@ -105,6 +105,8 @@ int main(int argc, char *argv[]) {
     for (; optind < argc; optind++) {
         path = argv[optind];
     }
+    printf("%*s %*s %*s %*s %*s %*s %*s %s", -14, "Driver", 8, "Count", -9, "Type", 3, "Layer no.",
+           -30, "Name", 10, "Proj", -12, "Auth", "File");
 
     GDALAllRegister();
     start(path);
@@ -188,6 +190,7 @@ void open(const basic_string<char> &file) {
     char layerNameBuf[100];
     int layerCount{poDS->GetLayerCount()};
 
+
     for (int i = 0; i < layerCount; i++) {
         OGRLayer *layer{poDS->GetLayer(i)};
         const OGRSpatialReference *reference = layer->GetSpatialRef();
@@ -250,7 +253,7 @@ void open(const basic_string<char> &file) {
             }
         }
 
-        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -14, type.c_str(), 3,
+        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -15, type.c_str(), 3,
                i + 1,
                -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0 ? file.c_str() : "");
         if (import) {
