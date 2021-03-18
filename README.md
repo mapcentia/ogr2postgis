@@ -28,7 +28,6 @@ $ ogr2postgis .
 Driver            Count Type      Layer no. Name                                 Proj Auth         File
 GML               11029 linestring        1 JERNBANE                             True EPSG:25832   /home/mh/Data/Railroad.gml
 GML                 217 polygon           1 BYKERNE                              True EPSG:25832   /home/mh/Data/City_center.gml
-OpenFileGDB          99 point             1 baal_vand_p_fuglet_madpakkehus       True EPSG:25832   /home/mh/Data/_ags_data218A3C11A8AB47BA9F27F15E186EE457.gdb
 OpenFileGDB          99 point             1 baal_vand_p_fuglet_madpakkehus       True EPSG:25832   /home/mh/Data/FileGD/_ags_data218A3C11A8AB47BA9F27F15E186EE457.gdb
 ESRI Shapefile      255 multipolygon      1 ne_10m_admin_0_countries             True EPSG:4326    /home/mh/Data/ne_10m_admin_0_countries/ne_10m_admin_0_countries.shp
 GPKG                  4 point             1 madpakkehus                          True EPSG:25832   /home/mh/Data/madpakkehus.gpkg
@@ -50,7 +49,6 @@ MapInfo File       1501 polygon           1 RETSKR                              
 MapInfo File       1574 polygon           1 OPSTILKR                             True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/OPSTILKR.tab
 GML              140016 polygon           1 StedNavn                             True EPSG:25832   /home/mh/Data/KORT10/KORT10.gml
 GML                 518 point             1 TOGSTATION                           True EPSG:25832   /home/mh/Data/Train_station.gml
-GPKG                  4 point             1 madpakkehus_mangler_felt             True EPSG:25832   /home/mh/Data/madpakkehus_mangler_felt.gpkg
 Total 23
 GDAL 3.2.0, released 2020/10/26
 
