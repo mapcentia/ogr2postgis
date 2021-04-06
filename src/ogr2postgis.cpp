@@ -290,9 +290,14 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     const char *one{"PGCLIENTENCODING="};
     char buf[100];
     char altNameBuf[100];
+    char nameBuf[200];
     strcpy(buf, one);
     strcat(buf, encoding);
     putenv(buf);
+
+
+    strcat(altNameBuf, schema);
+    strcat(altNameBuf, ".");
 
     if (nln) {
         altName = nln;
@@ -303,6 +308,11 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
             altName = altNameBuf;
         }
     }
+
+    strcpy(nameBuf, schema);
+    strcat(nameBuf, ".");
+    strcat(nameBuf, altName);
+    altName = nameBuf;
 
     if ((type == "point" || type == "linestring" || type == "polygon") && p_multi) {
         type = "multi" + type;
@@ -343,8 +353,6 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
 
 
     argv = CSLAddString(argv, layerName);
-
-    papszOptions = CSLAddNameValue(papszOptions, "ACTIVE_SCHEMA", schema);
 
     GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_UPDATE | GDAL_OF_VECTOR,
