@@ -374,8 +374,7 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
         return TRUE;
     } else {
         OGRLayer *layer = dst->GetLayerByName(altName);
-
-        if (layer->GetFeatureCount() != featureCount && !append) {
+        if (layer->GetFeatureCount() == 0) {
             std::cout << "Try again" << std::endl;
             GDALVectorTranslateOptionsFree(opt);
             GDALClose(dst);
