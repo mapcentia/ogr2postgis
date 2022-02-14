@@ -16,7 +16,8 @@ inline bool caseInsCharCompareN(char a, char b);
 bool caseInsCompare(const string &s1, const vector<string> &s2);
 
 bool
-translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+translate(const char *pszFilename, const char *encoding, const char *layerName, GIntBig featureCount,
+          const char *wktString,
           std::string type, char authStr[100], int leyerIndex);
 
 void start(char const *path);
@@ -38,15 +39,17 @@ const int maxFeatures{1};
 bool errorFlag{false};
 vector<string> errorStrings;
 
-struct ctx {};
+struct ctx {
+};
 ctx myctx;
+
 static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
     //ctx * myctx = (ctx *)CPLGetErrorHandlerUserData();
     std::string str(msg);
     errorStrings.emplace_back(str);
     if (str.find(std::string("already exists")) != std::string::npos) {
         std::cout << "\n\n";
-        for (const auto &item : errorStrings) {
+        for (const auto &item: errorStrings) {
             cout << item << "; ";
         }
         cout << endl;
@@ -286,9 +289,7 @@ void open(const basic_string<char> &file) {
                 translate(file.c_str(), "LATIN1", layerName, featureCount, wktString, type, authStr, i);
             };
         }
-
         OGRFeature::DestroyFeature(poFeature);
-
     }
     GDALClose(poDS);
 }
@@ -306,9 +307,8 @@ bool caseInsCharCompareN(char a, char b) {
 }
 
 
-
 bool
-translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
+translate(const char *pszFilename, const char *encoding, const char *layerName, GIntBig featureCount, const char *wktString,
           std::string type, char authStr[100], int layerIndex) {
 
     CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
