@@ -6,6 +6,7 @@
 #include <list>
 #include <experimental/filesystem>
 
+
 using namespace std;
 
 namespace fs = experimental::filesystem;
@@ -34,6 +35,27 @@ bool import{false};
 bool p_multi{false};
 bool append{false};
 const int maxFeatures{1};
+bool errorFlag{false};
+vector<string> errorStrings;
+
+struct ctx {};
+ctx myctx;
+static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
+    //ctx * myctx = (ctx *)CPLGetErrorHandlerUserData();
+    std::string str(msg);
+    errorStrings.emplace_back(str);
+    if (str.find(std::string("already exists")) != std::string::npos) {
+        std::cout << "\n\n";
+        for (const auto &item : errorStrings) {
+            cout << item << "; ";
+        }
+        cout << endl;
+        exit(1);
+    }
+    if (str.find(std::string("ERROR")) != std::string::npos) {
+        errorFlag = TRUE;
+    }
+}
 
 int main(int argc, char *argv[]) {
     int opt;
@@ -260,6 +282,7 @@ void open(const basic_string<char> &file) {
             layerName = poDS->GetLayer(i)->GetName();
             if (translate(file.c_str(), "UTF8", layerName, featureCount, wktString, type, authStr, i) ==
                 FALSE) {
+                errorFlag = FALSE;
                 translate(file.c_str(), "LATIN1", layerName, featureCount, wktString, type, authStr, i);
             };
         }
@@ -271,7 +294,7 @@ void open(const basic_string<char> &file) {
 }
 
 bool caseInsCompare(const string &s1, const vector<string> &s2) {
-    for (string text : s2) {
+    for (string text: s2) {
         if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
             return true;
     }
@@ -282,9 +305,14 @@ bool caseInsCharCompareN(char a, char b) {
     return (toupper(a) == toupper(b));
 }
 
+
+
 bool
 translate(const char *pszFilename, const char *encoding, const char *layerName, int featureCount, const char *wktString,
           std::string type, char authStr[100], int layerIndex) {
+
+    CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
+
     // Set client encoding with a env
     const char *altName{layerName};
     const char *one{"PGCLIENTENCODING="};
@@ -295,6 +323,7 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     strcat(buf, encoding);
     putenv(buf);
 
+    std::setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
 
     strcat(altNameBuf, schema);
     strcat(altNameBuf, ".");
@@ -351,7 +380,6 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     argv = CSLAddString(argv, "-nln");
     argv = CSLAddString(argv, altName);
 
-
     argv = CSLAddString(argv, layerName);
 
     GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
@@ -366,24 +394,15 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     int bUsageError{FALSE};
     GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
     auto *dst = (GDALDataset *) GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError);
-
-    if (dst == nullptr) {
-        std::cout << "ERROR!" << std::endl;
+    if (errorFlag) {
         GDALVectorTranslateOptionsFree(opt);
         GDALClose(dst);
-        return TRUE;
-    } else {
-        OGRLayer *layer = dst->GetLayerByName(altName);
-        if (layer->GetFeatureCount() == 0) {
-            std::cout << "Try again" << std::endl;
-            GDALVectorTranslateOptionsFree(opt);
-            GDALClose(dst);
-            return FALSE;
-        }
-        std::cout << "   Imported";
-        GDALVectorTranslateOptionsFree(opt);
-        GDALClose(dst);
-        CSLDestroy(argv);
-        return TRUE;
+        return FALSE;
     }
+    std::cout << "   Imported";
+    GDALVectorTranslateOptionsFree(opt);
+    GDALClose(dst);
+    CSLDestroy(argv);
+    return TRUE;
+
 }
