@@ -16,13 +16,13 @@ inline bool caseInsCharCompareN(char a, char b);
 bool caseInsCompare(const string &s1, const vector<string> &s2);
 
 bool
-translate(const char *pszFilename, const char *encoding, const char *layerName, GIntBig featureCount,
+translate(const string& file, const string& encoding, const string& layerName, GIntBig featureCount,
           const char *wktString,
-          std::string type, char authStr[100], int leyerIndex);
+          string type, char authStr[100], int layerIndex);
 
-void start(char const *path);
+void start(string path);
 
-void open(const basic_string<char> &file);
+void open(string &file);
 
 static void help(const char *programName);
 
@@ -30,7 +30,7 @@ const char *connection;
 const char *t_srs{nullptr};
 const char *s_srs{nullptr};
 const char *nln{nullptr};
-const char *schema{"public"};
+string schema{"public"};
 int countf{0};
 bool import{false};
 bool p_multi{false};
@@ -165,11 +165,11 @@ void help(const char *programName) {
 //    printf("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL;
 }
 
-void start(const char *path) {
+void start(string path) {
+    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg", ".gdb"}};
     string file;
     string fileExtension;
-    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg", ".gdb"}};
-    std::string s(path);
+    string s(path);
     if (s.find(".gdb") != string::npos) {
         open(path);
     } else {
@@ -197,7 +197,7 @@ void start(const char *path) {
     printf("%s\n", GDALVersionInfo("--version"));
 }
 
-void open(const basic_string<char> &file) {
+void open(string &file) {
     countf++;
     auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     if (poDS == nullptr) {
@@ -208,13 +208,11 @@ void open(const basic_string<char> &file) {
     char *wktString{nullptr};
     const char *authorityName;
     const char *authorityCode;
-    const char *hasWkt{"True"};
-    const char *layerName;
-    const char *driverName{poDS->GetDriverName()};
     char authStr[100];
-    char layerNameBuf[100];
     int layerCount{poDS->GetLayerCount()};
-
+    string hasWkt{"True"};
+    string layerName;
+    string driverName{poDS->GetDriverName()};
 
     for (int i = 0; i < layerCount; i++) {
         OGRLayer *layer{poDS->GetLayer(i)};
@@ -225,9 +223,8 @@ void open(const basic_string<char> &file) {
             authorityName = projection->GetAuthorityName(nullptr);
             authorityCode = projection->GetAuthorityCode(nullptr);
             if (authorityName != nullptr && authorityCode != nullptr) {
-                const char *sep{":"};
                 strcpy(authStr, authorityName);
-                strcat(authStr, sep);
+                strcat(authStr, ":");
                 strcat(authStr, authorityCode);
             } else {
                 strcpy(authStr, "-");
@@ -243,7 +240,7 @@ void open(const basic_string<char> &file) {
         GIntBig featureCount = layer->GetFeatureCount(1);
 
         int count{0};
-        std::string type;
+        string type;
         OGRFeature *poFeature;
         while ((poFeature = layer->GetNextFeature()) != nullptr) {
             OGRGeometry *poGeometry = poFeature->GetGeometryRef();
@@ -278,15 +275,15 @@ void open(const basic_string<char> &file) {
             }
         }
 
-        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName : "", 8, featureCount, -15, type.c_str(), 3,
+        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName.c_str() : "", 8, featureCount, -15, type.c_str(), 3,
                i + 1,
-               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt, -12, authStr, i == 0 ? file.c_str() : "");
+               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt.c_str(), -12, authStr, i == 0 ? file.c_str() : "");
         if (import) {
-            layerName = poDS->GetLayer(i)->GetName();
-            if (translate(file.c_str(), "UTF8", layerName, featureCount, wktString, type, authStr, i) ==
+            layerName = string(poDS->GetLayer(i)->GetName());
+            if (translate(file, "UTF8", layerName, featureCount, wktString, type, authStr, i) ==
                 FALSE) {
                 errorFlag = FALSE;
-                translate(file.c_str(), "LATIN1", layerName, featureCount, wktString, type, authStr, i);
+                translate(file, "LATIN1", layerName, featureCount, wktString, type, authStr, i);
             };
         }
         OGRFeature::DestroyFeature(poFeature);
@@ -308,40 +305,28 @@ bool caseInsCharCompareN(char a, char b) {
 
 
 bool
-translate(const char *pszFilename, const char *encoding, const char *layerName, GIntBig featureCount, const char *wktString,
-          std::string type, char authStr[100], int layerIndex) {
+translate(const string& file, const string& encoding, const string& layerName, GIntBig featureCount,
+          const char *wktString,
+          string type, char authStr[100], int layerIndex) {
 
     CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
 
-    // Set client encoding with a env
-    const char *altName{layerName};
-    const char *one{"PGCLIENTENCODING="};
-    char buf[100];
-    char altNameBuf[100];
-    char nameBuf[200];
-    strcpy(buf, one);
-    strcat(buf, encoding);
-    putenv(buf);
+    string altName = layerName;
 
-    std::setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
+    string env = "PGCLIENTENCODING=" + encoding;
+    putenv((char *) env.c_str());
 
-    strcat(altNameBuf, schema);
-    strcat(altNameBuf, ".");
+    setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
+
 
     if (nln) {
         altName = nln;
         if (layerIndex > 0) {
-            strcpy(altNameBuf, altName);
-            strcat(altNameBuf, "_");
-            strcat(altNameBuf, to_string(layerIndex).c_str());
-            altName = altNameBuf;
+            altName = altName + "_" + to_string(layerIndex);
         }
     }
 
-    strcpy(nameBuf, schema);
-    strcat(nameBuf, ".");
-    strcat(nameBuf, altName);
-    altName = nameBuf;
+    altName = schema + "." + altName;
 
     if ((type == "point" || type == "linestring" || type == "polygon") && p_multi) {
         type = "multi" + type;
@@ -368,7 +353,6 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     argv = CSLAddString(argv, "FID=gid");
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "PRECISION=NO");
-
     argv = CSLAddString(argv, "-nlt");
     argv = CSLAddString(argv, type.c_str());
     argv = CSLAddString(argv, "-s_srs"); // source projection
@@ -378,11 +362,10 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
                         reinterpret_cast<const char *>(strcmp(authStr, "-") != 0 ? authStr : t_srs != nullptr ? t_srs
                                                                                                               : "EPSG:4326")); // Convert to this
     argv = CSLAddString(argv, "-nln");
-    argv = CSLAddString(argv, altName);
+    argv = CSLAddString(argv, altName.c_str());
+    argv = CSLAddString(argv, layerName.c_str());
 
-    argv = CSLAddString(argv, layerName);
-
-    GDALDatasetH sourceDs = GDALOpenEx(pszFilename, GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+    GDALDatasetH sourceDs = GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_UPDATE | GDAL_OF_VECTOR,
                                    nullptr, papszOptions, nullptr);
     CSLDestroy(papszOptions);
@@ -404,5 +387,4 @@ translate(const char *pszFilename, const char *encoding, const char *layerName, 
     GDALClose(dst);
     CSLDestroy(argv);
     return TRUE;
-
 }
