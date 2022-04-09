@@ -16,110 +16,64 @@
 #include "indicators.hpp"
 #include "tabulate.hpp"
 #include "ogr2postgis.hpp"
+#include "argparse.hpp"
 
 using namespace std;
 using namespace tabulate;
 
 int main(int argc, char *argv[]) {
-    int opt;
-    int long_index{0};
-    const char *programName{argv[0]};
-    const char *path;
-    if (argc > 1) {
-        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0) {
-            help(programName);
-            exit(0);
-        }
+    argparse::ArgumentParser program("ogr2postgis");
+    program.add_argument("-c", "--connection").help("Hej");
+    program.add_argument("-o", "--schema");
+    program.add_argument("-t", "--t_srs");
+    program.add_argument("-s", "--s_srs");
+    program.add_argument("-n", "--nln");
+    program.add_argument("-i", "--import").help("Hej").default_value(false).implicit_value(true);
+    program.add_argument("-p", "--p_multi").default_value(false).implicit_value(true);
+    program.add_argument("-a", "--append").default_value(false).implicit_value(true);
+    program.add_argument("path")
+            .help("display the square of a given number");
+
+    try {
+        program.parse_args(argc, argv);
     }
-    //Specifying the expected options
-    static struct option long_options[] = {
-            {"connection", required_argument, nullptr, 'c'},
-            {"schema",     required_argument, nullptr, 'o'},
-            {"t_srs",      required_argument, nullptr, 't'},
-            {"s_srs",      required_argument, nullptr, 's'},
-            {"nln",        required_argument, nullptr, 'n'},
-            {"import",     no_argument,       nullptr, 'i'},
-            {"p_multi",    no_argument,       nullptr, 'm'},
-            {"append",     no_argument,       nullptr, 'a'},
-            {"help",       no_argument,       nullptr, 'h'},
-            {"help",       no_argument,       nullptr, '?'},
-            {nullptr, 0,                      nullptr, 0}
+    catch (const std::runtime_error &err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        std::exit(1);
+    }
+    if (program.present("--connection")) {
+        connection = program.get("c");
+    }
+    if (program.present("--schema")) {
+        schema = program.get("o");
+    } else {
+        schema = "public";
+    }
+    if (program["--import"] == true) {
+        import = true;
     };
-    while ((opt = getopt_long(argc, argv, "c:o:t:s:n:i:p:a:", long_options, &long_index)) != -1) {
-        switch (opt) {
-            case 'c':
-                connection = optarg;
-                break;
-            case 'o':
-                schema = optarg;
-                break;
-            case 't':
-                t_srs = optarg;
-                break;
-            case 's':
-                s_srs = optarg;
-                break;
-            case 'n':
-                nln = optarg;
-                break;
-            case 'i':
-                import = true;
-                optind--;
-                break;
-            case 'p':
-                p_multi = true;
-                optind--;
-                break;
-            case 'a':
-                append = true;
-                optind--;
-                break;
-            default:
-                help(programName);
-                exit(1);
-        }
+    if (program.present("--t_srs")) {
+        t_srs = program.get("t");
     }
-    if (argc < 2) {
-        help(programName);
-        exit(1);
+    if (program.present("--s_srs")) {
+        s_srs = program.get("s");
     }
-    // optind is for the extra arguments
-    // which are not parsed
-    for (; optind < argc; optind++) {
-        path = argv[optind];
+    if (program.present("--nln")) {
+        nln = program.get("n");
     }
+    if (program["--append"] == true) {
+        append = true;
+    };
+    if (program["--p_multi"] == true) {
+        p_multi = true;
+    };
+
+    auto path = program.get("path");
+
+
     GDALAllRegister();
     start(path);
-}
-
-void help(const char *programName) {
-    printf("%s iterate recursive through a directory tree and extracts info about detected geo-spatial vector file formats. Optional import files into to a PostGIS database.\n",
-           programName);
-    printf("If mixed single and multi part geometry are detected then geometry will be promoted to multi when importing.\n");
-    printf("If mixed geometry types are detected the type is set to 'geometry' when importing.\n\n");
-    printf("Will only detect files with these extensions (case insensitive) .tab, .shp, .gml, .geojson, .gpkg, .gdb\n\n");
-    printf("Usage:\n");
-    printf("  %s [OPTION]... [DIRECTORY|FILE]\n", programName);
-
-    printf("\nGeneral options:\n");
-    printf("  -?, --help                    Show this help, then exit\n");
-
-    printf("\nOptions controlling the import to postgis:\n");
-    printf("  -i, --import                  Optional. Import found files into PostgreSQL/PostGIS.\n");
-    printf("  -o, --schema                  Optional. Output PostgreSQL schema, Defaults to public.\n");
-    printf("  -s, --s_srs                   Optional. Fallback source SRS. Will be used if file doesn't contain projection information.\n");
-    printf("  -t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326.\n");
-    printf("  -n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories unless --append is used.\n");
-    printf("  -p, --p_multi                 Optional. Promote single geometries to multi part.\n");
-    printf("  -a, --append                  Optional. Append to existing layer instead of creating new.\n");
-
-    printf("\nConnection options:\n");
-    printf("  -c, --connection=PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"\n");
-
-//    printf("\nIf no database name is supplied, then the PGDATABASE environment\n"
-//           "variable value is used.\n\n");
-//    printf("Report bugs to <%s>.\n"), PACKAGE_BUGREPORT;
-//    printf("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL;
 }
 
 void start(string path) {
@@ -132,7 +86,7 @@ void start(string path) {
     } else {
         try {
             for (auto &p: experimental::filesystem::recursive_directory_iterator(path)) {
-                if (nln && import && !append) {
+                if (!nln.empty() && import && !append) {
                     printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                     exit(1);
                 }
@@ -161,7 +115,7 @@ void start(string path) {
     if (import) {
         importBar.set_option(indicators::option::MaxProgress{layers.size()});
         for (const struct layer &l: layers) {
-            if (l.error == "") {
+            if (l.error.empty()) {
                 pool.push_task(translate, l, "UTF8", i, true);
             } else {
                 importBar.tick();
@@ -178,10 +132,11 @@ void start(string path) {
             .font_style({FontStyle::underline, FontStyle::bold});
     i = 0;
     for (const struct layer &l: layers) {
-        table.add_row({l.driverName.c_str(), to_string(l.featureCount),  l.type + (l.singleMultiMixed ? "(m)": ""), to_string(l.layerIndex), l.layerName,
+        table.add_row({l.driverName.c_str(), to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
+                       to_string(l.layerIndex), l.layerName,
                        l.hasWkt, l.authStr, l.file, l.error}).format();
         i++;
-        if (l.error != "") {
+        if (!l.error.empty()) {
             table[i][8].format().font_color(Color::red);
         }
 
@@ -199,8 +154,8 @@ void open(string file) {
                "", 0, "", false};
     CPLPushErrorHandlerEx(&openErrorHandler, &l);
     auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
-    if (l.error != "" || poDS == nullptr) {
-        l.error = l.error != "" ? l.error : "Unable to open file";
+    if (!l.error.empty() || poDS == nullptr) {
+        l.error = !l.error.empty() ? l.error : "Unable to open file";
         layers.push_back(l);
         readBar.tick();
         return;
@@ -267,7 +222,8 @@ void open(string file) {
             if (count == maxFeatures || count == featureCount) {
                 break;
             } else {
-                if (tmpType != "" && (tmpType != type && tmpType != "multi" + type && tmpType != type.substr(5, type.length()))) {
+                if (!tmpType.empty() &&
+                    (tmpType != type && tmpType != "multi" + type && tmpType != type.substr(5, type.length()))) {
                     type = "geometry";
                     break;
                 }
@@ -299,7 +255,7 @@ translate(layer l, const string &encoding, int index, bool first) {
     CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
     putenv((char *) env.c_str());
     setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
-    if (nln) {
+    if (!nln.empty()) {
         altName = nln;
         if (l.layerIndex > 0) {
             altName = altName + "_" + to_string(l.layerIndex);
@@ -309,7 +265,7 @@ translate(layer l, const string &encoding, int index, bool first) {
     if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") && (l.singleMultiMixed || p_multi)) {
         l.type = "multi" + l.type;
     }
-    const char *targetSrs = reinterpret_cast<const char *>(l.wktString != nullptr ? l.wktString : s_srs);
+    const char *targetSrs = reinterpret_cast<const char *>(l.wktString != nullptr ? l.wktString : s_srs.c_str());
     if (targetSrs == nullptr) {
         layers[index].error = "Can't impoort without source srs";
         CSLDestroy(argv);
@@ -336,13 +292,13 @@ translate(layer l, const string &encoding, int index, bool first) {
     argv = CSLAddString(argv, "-t_srs");
     argv = CSLAddString(argv,
                         reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0 ? l.authStr.c_str() :
-                                                       t_srs != nullptr ? t_srs
+                                                       !t_srs.empty() ? t_srs.c_str()
                                                                         : "EPSG:4326")); // Convert to this
     argv = CSLAddString(argv, "-nln");
     argv = CSLAddString(argv, altName.c_str());
     argv = CSLAddString(argv, l.layerName.c_str());
 
-    GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_UPDATE | GDAL_OF_VECTOR,
+    GDALDatasetH pgDs = GDALOpenEx(connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR,
                                    nullptr, nullptr, nullptr);
     GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
 
