@@ -1,78 +1,36 @@
-#include "ogrsf_frmts.h"
-#include "gdal_utils.h"
+/*
+ * @author     Martin Høgh <mh@mapcentia.com>
+ * @copyright  2013-2022 MapCentia ApS
+ * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
+ */
+
 #include <getopt.h>
 #include <iostream>
 #include <vector>
 #include <list>
 #include <experimental/filesystem>
-
+#include <chrono>
+#include "ogrsf_frmts.h"
+#include "gdal_utils.h"
+#include "thread_pool.hpp"
+#include "indicators.hpp"
+#include "tabulate.hpp"
+#include "ogr2postgis.hpp"
 
 using namespace std;
-
-namespace fs = experimental::filesystem;
-
-inline bool caseInsCharCompareN(char a, char b);
-
-bool caseInsCompare(const string &s1, const vector<string> &s2);
-
-bool
-translate(const string& file, const string& encoding, const string& layerName, GIntBig featureCount,
-          const char *wktString,
-          string type, char authStr[100], int layerIndex);
-
-void start(string path);
-
-void open(string &file);
-
-static void help(const char *programName);
-
-const char *connection;
-const char *t_srs{nullptr};
-const char *s_srs{nullptr};
-const char *nln{nullptr};
-string schema{"public"};
-int countf{0};
-bool import{false};
-bool p_multi{false};
-bool append{false};
-const int maxFeatures{1};
-bool errorFlag{false};
-vector<string> errorStrings;
-
-struct ctx {
-};
-ctx myctx;
-
-static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
-    //ctx * myctx = (ctx *)CPLGetErrorHandlerUserData();
-    std::string str(msg);
-    errorStrings.emplace_back(str);
-    if (str.find(std::string("already exists")) != std::string::npos) {
-        std::cout << "\n\n";
-        for (const auto &item: errorStrings) {
-            cout << item << "; ";
-        }
-        cout << endl;
-        exit(1);
-    }
-    if (str.find(std::string("ERROR")) != std::string::npos) {
-        errorFlag = TRUE;
-    }
-}
+using namespace tabulate;
 
 int main(int argc, char *argv[]) {
     int opt;
     int long_index{0};
     const char *programName{argv[0]};
     const char *path;
-
     if (argc > 1) {
-        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-?") == 0) {
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0) {
             help(programName);
             exit(0);
         }
     }
-
     //Specifying the expected options
     static struct option long_options[] = {
             {"connection", required_argument, nullptr, 'c'},
@@ -83,6 +41,7 @@ int main(int argc, char *argv[]) {
             {"import",     no_argument,       nullptr, 'i'},
             {"p_multi",    no_argument,       nullptr, 'm'},
             {"append",     no_argument,       nullptr, 'a'},
+            {"help",       no_argument,       nullptr, 'h'},
             {"help",       no_argument,       nullptr, '?'},
             {nullptr, 0,                      nullptr, 0}
     };
@@ -124,23 +83,21 @@ int main(int argc, char *argv[]) {
         help(programName);
         exit(1);
     }
-
     // optind is for the extra arguments
     // which are not parsed
     for (; optind < argc; optind++) {
         path = argv[optind];
     }
-    printf("%*s %*s %*s %*s %*s %*s %*s %s", -14, "Driver", 8, "Count", -9, "Type", 3, "Layer no.",
-           -30, "Name", 10, "Proj", -12, "Auth", "File");
-
     GDALAllRegister();
     start(path);
 }
 
 void help(const char *programName) {
-    printf("%s iterate recursive through a directory tree and prints info about found geo-spatial vector file formats. Optional import files into to a PostGIS database.\n",
+    printf("%s iterate recursive through a directory tree and extracts info about detected geo-spatial vector file formats. Optional import files into to a PostGIS database.\n",
            programName);
-    printf(" Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb\n\n");
+    printf("If mixed single and multi part geometry are detected then geometry will be promoted to multi when importing.\n");
+    printf("If mixed geometry types are detected the type is set to 'geometry' when importing.\n\n");
+    printf("Will only detect files with these extensions (case insensitive) .tab, .shp, .gml, .geojson, .gpkg, .gdb\n\n");
     printf("Usage:\n");
     printf("  %s [OPTION]... [DIRECTORY|FILE]\n", programName);
 
@@ -166,15 +123,15 @@ void help(const char *programName) {
 }
 
 void start(string path) {
-    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".json", ".gpkg", ".gdb"}};
+    vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb"}};
+    vector<string> fileNames;
     string file;
     string fileExtension;
-    string s(path);
-    if (s.find(".gdb") != string::npos) {
-        open(path);
+    if (path.find(".gdb") != string::npos) {
+        fileNames.push_back(path);
     } else {
         try {
-            for (auto &p: fs::recursive_directory_iterator(path)) {
+            for (auto &p: experimental::filesystem::recursive_directory_iterator(path)) {
                 if (nln && import && !append) {
                     printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                     exit(1);
@@ -182,7 +139,7 @@ void start(string path) {
                 file = p.path().string();
                 fileExtension = p.path().extension();
                 if (caseInsCompare(fileExtension, extensions)) {
-                    open(file);
+                    fileNames.push_back(file);
                 }
             }
         } catch (const std::exception &e) {
@@ -190,30 +147,73 @@ void start(string path) {
                 printf("ERROR: Could not open directory or file.\n");
                 exit(1);
             };
-            open(path);
+            fileNames.push_back(path);
         }
     }
-    printf("\nTotal %i\n", countf);
-    printf("%s\n", GDALVersionInfo("--version"));
+    readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
+    for (const string &fileName: fileNames) {
+        pool.push_task(open, fileName);
+    }
+    pool.wait_for_tasks();
+    std::cout << "\r" << std::flush;
+    int i{0};
+    // Import in PostGIS
+    if (import) {
+        importBar.set_option(indicators::option::MaxProgress{layers.size()});
+        for (const struct layer &l: layers) {
+            if (l.error == "") {
+                pool.push_task(translate, l, "UTF8", i, true);
+            } else {
+                importBar.tick();
+            }
+            i++;
+        };
+        pool.wait_for_tasks();
+    }
+    // Print out
+    Table table;
+    table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
+    table[0].format()
+            .font_align(FontAlign::center)
+            .font_style({FontStyle::underline, FontStyle::bold});
+    i = 0;
+    for (const struct layer &l: layers) {
+        table.add_row({l.driverName.c_str(), to_string(l.featureCount),  l.type + (l.singleMultiMixed ? "(m)": ""), to_string(l.layerIndex), l.layerName,
+                       l.hasWkt, l.authStr, l.file, l.error}).format();
+        i++;
+        if (l.error != "") {
+            table[i][8].format().font_color(Color::red);
+        }
+
+    }
+    std::cout << "\r" << std::flush;
+    std::cout << table << std::endl;
+    auto stopTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stopTime - startTime);
+    printf("Total of %zu layer(s) in %zu file(s) processed in %zums using %s\n", layers.size(), fileNames.size(),
+           duration.count(), GDALVersionInfo("--version"));
 }
 
-void open(string &file) {
-    countf++;
+void open(string file) {
+    layer l = {"", 0, "", "", "", file, nullptr,
+               "", 0, "", false};
+    CPLPushErrorHandlerEx(&openErrorHandler, &l);
     auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
-    if (poDS == nullptr) {
-        printf("Open failed.\n");
-        exit(1);
+    if (l.error != "" || poDS == nullptr) {
+        l.error = l.error != "" ? l.error : "Unable to open file";
+        layers.push_back(l);
+        readBar.tick();
+        return;
     }
     OGRSpatialReference *projection;
     char *wktString{nullptr};
     const char *authorityName;
     const char *authorityCode;
-    char authStr[100];
+    string authStr;
     int layerCount{poDS->GetLayerCount()};
     string hasWkt{"True"};
     string layerName;
     string driverName{poDS->GetDriverName()};
-
     for (int i = 0; i < layerCount; i++) {
         OGRLayer *layer{poDS->GetLayer(i)};
         const OGRSpatialReference *reference = layer->GetSpatialRef();
@@ -223,24 +223,22 @@ void open(string &file) {
             authorityName = projection->GetAuthorityName(nullptr);
             authorityCode = projection->GetAuthorityCode(nullptr);
             if (authorityName != nullptr && authorityCode != nullptr) {
-                strcpy(authStr, authorityName);
-                strcat(authStr, ":");
-                strcat(authStr, authorityCode);
+                authStr = string(authorityName) + ":" + string(authorityCode);
             } else {
-                strcpy(authStr, "-");
+                authStr = "-";
             }
         } else {
             authorityName = "";
             authorityCode = "Na";
             hasWkt = "False";
-            strcpy(authStr, "-");
+            authStr = "-";
         }
-
         // Count features
         GIntBig featureCount = layer->GetFeatureCount(1);
-
         int count{0};
         string type;
+        string tmpType;
+        bool singleMultiMixed{false};
         OGRFeature *poFeature;
         while ((poFeature = layer->GetNextFeature()) != nullptr) {
             OGRGeometry *poGeometry = poFeature->GetGeometryRef();
@@ -266,80 +264,57 @@ void open(string &file) {
                 }
             }
             count++;
-
             if (count == maxFeatures || count == featureCount) {
-                std::cout << std::endl;
                 break;
             } else {
+                if (tmpType != "" && (tmpType != type && tmpType != "multi" + type && tmpType != type.substr(5, type.length()))) {
+                    type = "geometry";
+                    break;
+                }
+                if (tmpType == "multi" + type || tmpType == type.substr(5, type.length())) {
+                    singleMultiMixed = true;
+                }
+                tmpType = type;
                 continue;
             }
         }
-
-        printf("%*s %*llu %*s %*i %*s %*s %*s %s", -14, i == 0 ? driverName.c_str() : "", 8, featureCount, -15, type.c_str(), 3,
-               i + 1,
-               -30, poDS->GetLayer(i)->GetName(), 10, hasWkt.c_str(), -12, authStr, i == 0 ? file.c_str() : "");
-        if (import) {
-            layerName = string(poDS->GetLayer(i)->GetName());
-            if (translate(file, "UTF8", layerName, featureCount, wktString, type, authStr, i) ==
-                FALSE) {
-                errorFlag = FALSE;
-                translate(file, "LATIN1", layerName, featureCount, wktString, type, authStr, i);
-            };
-        }
+        l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file, wktString,
+             authStr, i, "", singleMultiMixed};
+        layers.push_back(l);
         OGRFeature::DestroyFeature(poFeature);
     }
+    readBar.tick();
     GDALClose(poDS);
 }
 
-bool caseInsCompare(const string &s1, const vector<string> &s2) {
-    for (string text: s2) {
-        if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
-            return true;
-    }
-    return false;
-}
-
-bool caseInsCharCompareN(char a, char b) {
-    return (toupper(a) == toupper(b));
-}
-
-
-bool
-translate(const string& file, const string& encoding, const string& layerName, GIntBig featureCount,
-          const char *wktString,
-          string type, char authStr[100], int layerIndex) {
-
-    CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
-
-    string altName = layerName;
-
+void
+translate(layer l, const string &encoding, int index, bool first) {
+    char **argv{nullptr};
+    string altName = l.layerName;
     string env = "PGCLIENTENCODING=" + encoding;
+    ctx myctx = {
+            .layerIndex =  index,
+            .error = false,
+    };
+    CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
     putenv((char *) env.c_str());
-
     setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
-
-
     if (nln) {
         altName = nln;
-        if (layerIndex > 0) {
-            altName = altName + "_" + to_string(layerIndex);
+        if (l.layerIndex > 0) {
+            altName = altName + "_" + to_string(l.layerIndex);
         }
     }
-
     altName = schema + "." + altName;
-
-    if ((type == "point" || type == "linestring" || type == "polygon") && p_multi) {
-        type = "multi" + type;
+    if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") && (l.singleMultiMixed || p_multi)) {
+        l.type = "multi" + l.type;
     }
-
-    char **papszOptions = nullptr;
-    char **argv{nullptr};
-
-    const char *targetSrs = reinterpret_cast<const char *>(wktString != nullptr ? wktString : s_srs);
+    const char *targetSrs = reinterpret_cast<const char *>(l.wktString != nullptr ? l.wktString : s_srs);
     if (targetSrs == nullptr) {
-        std::cout << "   Can't impoort without source srs" << std::endl;
+        layers[index].error = "Can't impoort without source srs";
         CSLDestroy(argv);
-        return TRUE;
+        importBar.tick();
+        return;
     }
     argv = CSLAddString(argv, "-f");
     argv = CSLAddString(argv, "PostgreSQL");
@@ -347,6 +322,7 @@ translate(const string& file, const string& encoding, const string& layerName, G
         argv = CSLAddString(argv, "-update");
         argv = CSLAddString(argv, "-append");
     }
+    argv = CSLAddString(argv, "-overwrite");
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
     argv = CSLAddString(argv, "-lco");
@@ -354,37 +330,33 @@ translate(const string& file, const string& encoding, const string& layerName, G
     argv = CSLAddString(argv, "-lco");
     argv = CSLAddString(argv, "PRECISION=NO");
     argv = CSLAddString(argv, "-nlt");
-    argv = CSLAddString(argv, type.c_str());
+    argv = CSLAddString(argv, l.type.c_str());
     argv = CSLAddString(argv, "-s_srs"); // source projection
     argv = CSLAddString(argv, targetSrs);
     argv = CSLAddString(argv, "-t_srs");
     argv = CSLAddString(argv,
-                        reinterpret_cast<const char *>(strcmp(authStr, "-") != 0 ? authStr : t_srs != nullptr ? t_srs
-                                                                                                              : "EPSG:4326")); // Convert to this
+                        reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0 ? l.authStr.c_str() :
+                                                       t_srs != nullptr ? t_srs
+                                                                        : "EPSG:4326")); // Convert to this
     argv = CSLAddString(argv, "-nln");
     argv = CSLAddString(argv, altName.c_str());
-    argv = CSLAddString(argv, layerName.c_str());
+    argv = CSLAddString(argv, l.layerName.c_str());
 
-    GDALDatasetH sourceDs = GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
     GDALDatasetH pgDs = GDALOpenEx(connection, GDAL_OF_UPDATE | GDAL_OF_VECTOR,
-                                   nullptr, papszOptions, nullptr);
-    CSLDestroy(papszOptions);
-
-    if (pgDs == nullptr) {
-        exit(1);
-    }
+                                   nullptr, nullptr, nullptr);
+    GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
 
     int bUsageError{FALSE};
     GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
     auto *dst = (GDALDataset *) GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError);
-    if (errorFlag) {
-        GDALVectorTranslateOptionsFree(opt);
-        GDALClose(dst);
-        return FALSE;
-    }
-    std::cout << "   Imported";
     GDALVectorTranslateOptionsFree(opt);
     GDALClose(dst);
     CSLDestroy(argv);
-    return TRUE;
+    // If error we try with the fallback encoding
+    if (myctx.error && first) {
+        layers[index].error = "";
+        translate(l, "LATIN1", index, false);
+        return;
+    }
+    importBar.tick();
 }
