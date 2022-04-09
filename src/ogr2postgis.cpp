@@ -4,7 +4,6 @@
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
 
-#include <getopt.h>
 #include <iostream>
 #include <vector>
 #include <list>
