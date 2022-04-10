@@ -7,7 +7,7 @@
 #include <iostream>
 #include <vector>
 #include <list>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <chrono>
 #include "ogrsf_frmts.h"
 #include "gdal_utils.h"
@@ -84,19 +84,19 @@ void start(string path) {
         fileNames.push_back(path);
     } else {
         try {
-            for (auto &p: experimental::filesystem::recursive_directory_iterator(path)) {
+            for (auto &p: filesystem::recursive_directory_iterator(path)) {
                 if (!nln.empty() && import && !append) {
                     printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                     exit(1);
                 }
                 file = p.path().string();
-                fileExtension = p.path().extension();
+                fileExtension = p.path().extension().string();
                 if (caseInsCompare(fileExtension, extensions)) {
                     fileNames.push_back(file);
                 }
             }
         } catch (const std::exception &e) {
-            if (!std::experimental::filesystem::exists(path)) {
+            if (!filesystem::exists(path)) {
                 printf("ERROR: Could not open directory or file.\n");
                 exit(1);
             };
@@ -105,7 +105,7 @@ void start(string path) {
     }
     readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
     for (const string &fileName: fileNames) {
-        pool.push_task(open, fileName);
+        pool.push_task(openSource, fileName);
     }
     pool.wait_for_tasks();
     std::cout << "\r" << std::flush;
@@ -148,7 +148,7 @@ void start(string path) {
            duration.count(), GDALVersionInfo("--version"));
 }
 
-void open(string file) {
+void openSource(string file) {
     layer l = {"", 0, "", "", "", file, nullptr,
                "", 0, "", false};
     CPLPushErrorHandlerEx(&openErrorHandler, &l);

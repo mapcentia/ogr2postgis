@@ -19,7 +19,7 @@ bool caseInsCharCompareN(char a, char b) {
 }
 thread_pool pool;
 void start(string path);
-void open(string file);
+void openSource(string file);
 static void help(const char *programName);
 string connection;
 string t_srs;
