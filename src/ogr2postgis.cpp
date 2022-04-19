@@ -59,8 +59,6 @@ int main(int argc, char *argv[]) {
     };
 
     auto path = program.get("path");
-
-
     start(path);
 }
 

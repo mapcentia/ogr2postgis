@@ -19,11 +19,9 @@ using namespace std;
 using namespace tabulate;
 
 namespace ogr2postgis {
-
+    mutex mutex;
     auto startTime = chrono::high_resolution_clock::now();
-
     inline bool caseInsCharCompareN(char a, char b);
-
     bool caseInsCompare(const string &s1, const vector<string> &s2) {
         for (string text: s2) {
             if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
@@ -37,11 +35,6 @@ namespace ogr2postgis {
     }
 
     thread_pool pool;
-
-
-    void openSource(string file);
-
-    static void help(const char *programName);
 
     string connection;
     string t_srs;
@@ -59,7 +52,7 @@ namespace ogr2postgis {
         string layerName;
         string hasWkt;
         string file;
-        char *wktString;
+        string wktString;
         string authStr;
         int layerIndex;
         string error;
@@ -67,7 +60,7 @@ namespace ogr2postgis {
     };
     vector<struct layer> layers;
     struct ctx {
-        int layerIndex;
+        int layerIndex{};
         bool error{false};
     };
 
@@ -83,11 +76,11 @@ namespace ogr2postgis {
 
     static void openErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
         string str(msg);
-        layer *l = (layer *) CPLGetErrorHandlerUserData();
+        auto *l = (layer *) CPLGetErrorHandlerUserData();
         l->error = str;
     }
 
-    indicators::BlockProgressBar readBar{
+    indicators::ProgressBar readBar{
             indicators::option::BarWidth{50},
             indicators::option::ForegroundColor{indicators::Color::white},
             indicators::option::FontStyles{
@@ -95,7 +88,7 @@ namespace ogr2postgis {
             },
             indicators::option::PostfixText{"Analyzing files"},
     };
-    indicators::BlockProgressBar importBar{
+    indicators::ProgressBar importBar{
             indicators::option::BarWidth{50},
             indicators::option::ForegroundColor{indicators::Color::white},
             indicators::option::FontStyles{
@@ -103,13 +96,15 @@ namespace ogr2postgis {
             },
             indicators::option::PostfixText{"Importing to PostgreSQL"},
     };
+
     inline void openSource(string file) {
-        layer l = {"", 0, "", "", "", file, nullptr,
+        layer l = {"", 0, "", "", "", file, "",
                    "", 0, "", false};
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
         auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
         if (!l.error.empty() || poDS == nullptr) {
-            l.error = !l.error.empty() ? l.error : "Unable to open file";
+            l.error= !l.error.empty() ? l.error : "Unable to open file";
+            std::scoped_lock lock;
             layers.push_back(l);
             readBar.tick();
             return;
@@ -188,14 +183,18 @@ namespace ogr2postgis {
                     continue;
                 }
             }
-            l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file, wktString,
+            l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file, wktString == nullptr ? "" : string(wktString),
                  authStr, i, "", singleMultiMixed};
-            layers.push_back(l);
+            {
+                std::scoped_lock lock;
+                layers.push_back(l);
+            }
             OGRFeature::DestroyFeature(poFeature);
         }
         readBar.tick();
         GDALClose(poDS);
     }
+
     void start(string path) {
         GDALAllRegister();
         vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb"}};
@@ -291,7 +290,7 @@ namespace ogr2postgis {
         if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") && (l.singleMultiMixed || p_multi)) {
             l.type = "multi" + l.type;
         }
-        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != nullptr ? l.wktString : s_srs.c_str());
+        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != "" ? l.wktString.c_str() : s_srs.c_str());
         if (targetSrs == nullptr) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
