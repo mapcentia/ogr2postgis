@@ -9,10 +9,10 @@
 #include <chrono>
 #include <iostream>
 #include <vector>
-#include "ogrsf_frmts.h"
+#include "gdal/ogrsf_frmts.h"
 #include "tabulate.hpp"
 #include "thread_pool.hpp"
-#include "gdal_utils.h"
+#include "gdal/gdal_utils.h"
 #include "indicators.hpp"
 
 using namespace std;
@@ -41,6 +41,7 @@ namespace ogr2postgis {
     string s_srs;
     string nln;
     string schema;
+    string fallbackEncoding;
     bool import{false};
     bool p_multi{false};
     bool append{false};
@@ -336,7 +337,7 @@ namespace ogr2postgis {
         // If error we try with the fallback encoding
         if (myctx.error && first) {
             layers[index].error = "";
-            translate(l, "LATIN1", index, false);
+            translate(l, fallbackEncoding, index, false);
             return;
         }
         importBar.tick();

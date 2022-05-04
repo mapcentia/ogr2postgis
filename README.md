@@ -1,55 +1,67 @@
 # ogr2postgis
 ogr2postgis iterate recursive through a directory tree and prints info about found geo-spatial vector file formats. Optional import files into to a PostGIS database.  
+
+Read and import is multi-threaded - all available CPU are used. 
+
+The first 1.000 features of each layer are read to determine the geometry type. If mixed GEOMETRY is reported. If same but mixed single/multi-part a "(m)" is added to the reported type and features are promoted to multi-part when imported into PostGIS.  
+
+Layers are attempted to be imported with encoding UTF8. If this fails a retry with a fallback character set is done. Default fallback is LATIN1.
   
 Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb  
 <pre>  
 Usage:
-ogr2postgis [OPTION]... [DIRECTORY|FILE]
+Usage: ogr2postgis [options] path 
 
-General options:  
--?, --helpShow this help, then exit
+Positional arguments:
+path                    [DIRECTORY|FILE]
 
-Options controlling the import to postgis:
--i, --import                  Optional. Import found files into PostgreSQL/PostGIS.  
--o, --schema                  Optional. Output PostgreSQL schema, Defaults to public.  
--s, --s_srs                   Optional. Fallback source SRS. Will be used if file doesn't contain projection information.  
--t, --t_srs                   Optianal. Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326.  
--n, --nln                     Optional. Alternative table name. Can only be used when importing single file - not directories unless --append is used.  
--p, --p_multi                 Optional. Promote single geometries to multi part.  
--a, --append                  Optional. Append to existing layer instead of creating new.  
-  
-Connection options:  
--c, --connection=PGDATASOURCE postgres datasource. E.g."dbname='databasename' host='addr' port='5432' user='x' password='y'"
+Optional arguments:
+-h --help               shows help message and exits [default: false]
+-v --version            prints version information and exits [default: false]
+-o --schema             Output PostgreSQL schema, Defaults to public.
+-t --t_srs              Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326.
+-s --s_srs              Fallback source SRS. Will be used if file doesn't contain projection information.
+-n --nln                Alternative table name. Can only be used when importing single file - not directories unless --append is used.
+-i --import             Optional. Import found files into PostgreSQL/PostGIS [default: false]
+-p --p_multi            Promote single geometries to multi part. [default: false]
+-a --append             Append to existing layer instead of creating new. [default: false]
+-c --connection         PGDATASOURCE postgres datasource. E.g."dbname='databasename' host='addr' port='5432' user='x' password='y'"
 </pre>
 
 Example:
 <pre>
 $ ogr2postgis . 
-Driver            Count Type      Layer no. Name                                 Proj Auth         File
-GML               11029 linestring        1 JERNBANE                             True EPSG:25832   /home/mh/Data/Railroad.gml
-GML                 217 polygon           1 BYKERNE                              True EPSG:25832   /home/mh/Data/City_center.gml
-OpenFileGDB          99 point             1 baal_vand_p_fuglet_madpakkehus       True EPSG:25832   /home/mh/Data/FileGD/_ags_data218A3C11A8AB47BA9F27F15E186EE457.gdb
-ESRI Shapefile      255 multipolygon      1 ne_10m_admin_0_countries             True EPSG:4326    /home/mh/Data/ne_10m_admin_0_countries/ne_10m_admin_0_countries.shp
-GPKG                  4 point             1 madpakkehus                          True EPSG:25832   /home/mh/Data/madpakkehus.gpkg
-ESRI Shapefile      173 polygon           1 KOMMUNER                            False -            /home/mh/Data/DAGI2M_SHAPE_UTM32-EUREF89/ADM/KOMMUNER.SHP
-GML                6523 point             1 VINDMOELLE                           True EPSG:25832   /home/mh/Data/Windmill.gml
-GPKG                553 point             1 train_stations                       True EPSG:25832   /home/mh/Data/test.gpkg
-                    218 polygon           2 city_center                          True EPSG:25832   
-                      2 linestring        3 layers:linje                         True EPSG:4326    
-ESRI Shapefile   127218 polygon           1 NAVNE_A                              True -            /home/mh/Data/NAVNE/NAVNE_A.shp
-ESRI Shapefile     9573 point             1 NAVNE_P                              True -            /home/mh/Data/NAVNE/NAVNE_P.shp
-ESRI Shapefile     3225 multilinestring   1 NAVNE_L                              True -            /home/mh/Data/NAVNE/NAVNE_L.shp
-MapInfo File        350 polygon           1 BDC_Land_Interests                   True -            /home/mh/Data/mapinfo/BDC_Land_Interests.tab
-MapInfo File       1478 polygon           1 REGION                               True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/REGION.tab
-MapInfo File       1575 polygon           1 KOMMUNE                              True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/KOMMUNE.tab
-MapInfo File       1330 polygon           1 POSTNUMMER                           True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/POSTNUMMER.tab
-MapInfo File       1484 polygon           1 POLITIKR                             True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/POLITIKR.tab
-MapInfo File       3856 polygon           1 SOGN                                 True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/SOGN.tab
-MapInfo File       1501 polygon           1 RETSKR                               True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/RETSKR.tab
-MapInfo File       1574 polygon           1 OPSTILKR                             True -            /home/mh/Data/mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/OPSTILKR.tab
-GML              140016 polygon           1 StedNavn                             True EPSG:25832   /home/mh/Data/KORT10/KORT10.gml
-GML                 518 point             1 TOGSTATION                           True EPSG:25832   /home/mh/Data/Train_station.gml
-Total 23
-GDAL 3.2.0, released 2020/10/26
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+|     Driver     | Count |        Type        | Layer no. |        Name        | Proj |    Auth    |                           File                           |                                  Error                                 |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+|                | 0     |                    | 0         |                    |      |            | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/RETSKR.tab     | Open() failed for mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/RETSKR.dat |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| GPKG           | 553   | point(m)           | 0         | train_stations     | True | EPSG:25832 | mapinfo/test.gpkg                                        |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| ESRI Shapefile | 27    | multilinestring(m) | 0         | latin1             | True | EPSG:25832 | mapinfo/latin1.shp                                       |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| GPKG           | 218   | polygon            | 1         | city_center        | True | EPSG:25832 | mapinfo/test.gpkg                                        |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| GPKG           | 2     | linestring         | 2         | layers:linje       | True | EPSG:4326  | mapinfo/test.gpkg                                        |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| GPKG           | 27    | multilinestring    | 3         | test               | True | EPSG:25832 | mapinfo/test.gpkg                                        |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 350   | polygon(m)         | 0         | BDC_Land_Interests | True | -          | mapinfo/BDC_Land_Interests.tab                           |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 1330  | polygon            | 0         | POSTNUMMER         | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/POSTNUMMER.tab |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 1484  | polygon            | 0         | POLITIKR           | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/POLITIKR.tab   |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 1478  | polygon            | 0         | REGION             | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/REGION.tab     |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 1575  | polygon            | 0         | KOMMUNE            | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/KOMMUNE.tab    |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 1574  | polygon            | 0         | OPSTILKR           | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/OPSTILKR.tab   |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+| MapInfo File   | 3856  | polygon            | 0         | SOGN               | True | -          | mapinfo/DAGIREF_MAPINFO_UTM32-EUREF89/ADM/SOGN.tab       |                                                                        |
++----------------+-------+--------------------+-----------+--------------------+------+------------+----------------------------------------------------------+------------------------------------------------------------------------+
+Total of 13 layer(s) in 10 file(s) processed in 626717ms using GDAL 3.4.1, released 2021/12/27
+
+
 
 </pre>
