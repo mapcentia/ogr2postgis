@@ -198,7 +198,7 @@ namespace ogr2postgis {
 
     void start(string path) {
         GDALAllRegister();
-        vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb"}};
+        vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
         vector<string> fileNames;
         string file;
         string fileExtension;

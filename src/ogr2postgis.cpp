@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
             "Alternative table name. Can only be used when importing single file - not directories unless --append is used.");
     program.add_argument("-e", "--encoding").help("Fallback encoding. Will be used if UTF8 fails").default_value(
             std::string{"LATIN1"});
-    program.add_argument("-i", "--import").help("Optional. Import found files into PostgreSQL/PostGIS").default_value(
+    program.add_argument("-i", "--import").help("Import found files into PostgreSQL/PostGIS").default_value(
             false).implicit_value(true);
     program.add_argument("-p", "--p_multi").help("Promote single geometries to multi part.").default_value(
             false).implicit_value(true);

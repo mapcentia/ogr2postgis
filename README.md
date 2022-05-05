@@ -1,13 +1,18 @@
 # ogr2postgis
 ogr2postgis iterate recursive through a directory tree and prints info about found geo-spatial vector file formats. Optional import files into to a PostGIS database.  
 
-Read and import is multi-threaded - all available CPU are used. 
+Features:
+- Multi-threaded read and import of data - all available CPU cores are used.  
 
-The first 1.000 features of each layer are read to determine the geometry type. If mixed GEOMETRY is reported. If same but mixed single/multi-part a "(m)" is added to the reported type and features are promoted to multi-part when imported into PostGIS.  
+- Each layer of multi-layered files (e.g. GeoPackage and GML) are processes.   
 
-Layers are attempted to be imported with encoding UTF8. If this fails a retry with a fallback character set is done. Default fallback is LATIN1.
+- The first 1.000 features of each layer are read to determine the geometry type. If mixed geometry then "GEOMETRY" is reported. If same geometry but mixed single/multi-part a "(m)" is added to the reported type and features are promoted to multi-part when imported into PostGIS.  
+
+- Layers are attempted to be imported with encoding UTF8. If this fails a retry with a fallback character set is done. Default fallback is LATIN1.   
+
+- Reports projection and authority code for layers. If this information doesn't exist fallback source/target SRS can be set then importing to PostGIS.    
   
-Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb  
+Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb, .fgb  
 <pre>  
 Usage:
 Usage: ogr2postgis [options] path 
@@ -22,7 +27,8 @@ Optional arguments:
 -t --t_srs              Fallback target SRS. Will be used if no authority name/code is available. Defaults to EPSG:4326.
 -s --s_srs              Fallback source SRS. Will be used if file doesn't contain projection information.
 -n --nln                Alternative table name. Can only be used when importing single file - not directories unless --append is used.
--i --import             Optional. Import found files into PostgreSQL/PostGIS [default: false]
+-e --encoding           Fallback encoding. Will be used if UTF8 fails [default: "LATIN1"]
+-i --import             Import found files into PostgreSQL/PostGIS [default: false]
 -p --p_multi            Promote single geometries to multi part. [default: false]
 -a --append             Append to existing layer instead of creating new. [default: false]
 -c --connection         PGDATASOURCE postgres datasource. E.g."dbname='databasename' host='addr' port='5432' user='x' password='y'"
