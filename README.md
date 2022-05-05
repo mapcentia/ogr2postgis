@@ -11,6 +11,8 @@ Features:
 - Layers are attempted to be imported with encoding UTF8. If this fails a retry with a fallback character set is done. Default fallback is LATIN1.   
 
 - Reports projection and authority code for layers. If this information doesn't exist fallback source/target SRS can be set then importing to PostGIS.    
+
+- Error reporting for both read and import.   
   
 Will only read files with these extensions (case insensitive) .tab, .shp, .gml, .geojson .json, .gpkg, .gdb, .fgb  
 <pre>  
