@@ -177,7 +177,7 @@ namespace ogr2postgis {
                         type = "geometry";
                         break;
                     }
-                    if (tmpType == "multi" + type || tmpType == type.substr(5, type.length())) {
+                    if (!tmpType.empty() && (tmpType == "multi" + type || tmpType == type.substr(5, type.length()))) {
                         singleMultiMixed = true;
                     }
                     tmpType = type;
