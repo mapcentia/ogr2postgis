@@ -266,8 +266,8 @@ namespace ogr2postgis {
         std::cout << table << std::endl;
         auto stopTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stopTime - startTime);
-        printf("Total of %zu layer(s) in %zu file(s) processed in %zums using %s\n", layers.size(), fileNames.size(),
-               duration.count(), GDALVersionInfo("--version"));
+        printf("Total of %zu layer(s) in %zu file(s) processed in %ldms using %s\n", layers.size(), fileNames.size(),
+               lround(duration.count()/1000), GDALVersionInfo("--version"));
     }
     inline void
     translate(layer l, const string &encoding, int index, bool first) {
