@@ -33,7 +33,7 @@ Optional arguments:
 -i --import             Import found files into PostgreSQL/PostGIS [default: false]
 -p --p_multi            Promote single geometries to multi part. [default: false]
 -a --append             Append to existing layer instead of creating new. [default: false]
--c --connection         PGDATASOURCE postgres datasource. E.g."dbname='databasename' host='addr' port='5432' user='x' password='y'"
+-c --connection         PGDATASOURCE postgres datasource. E.g."PG:host='addr' dbname='databasename' port='5432' user='x' password='y'"
 </pre>
 
 Example:

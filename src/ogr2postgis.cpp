@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
     program.add_argument("-a", "--append").help("Append to existing layer instead of creating new.").default_value(
             false).implicit_value(true);
     program.add_argument("-c", "--connection").help(
-            "PGDATASOURCE postgres datasource. E.g.\"dbname='databasename' host='addr' port='5432' user='x' password='y'\"");
+            "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
 //    program.add_epilog("Possible things include betingalw, chiz, and res.");
 
