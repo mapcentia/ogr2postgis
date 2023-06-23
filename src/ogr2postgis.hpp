@@ -34,6 +34,30 @@ namespace ogr2postgis {
         return (toupper(a) == toupper(b));
     }
 
+    string getGeomType (int t) {
+        string type;
+        switch (t) {
+            case 1:
+                type = "point";
+                break;
+            case 2:
+                type = "linestring";
+                break;
+            case 3:
+                type = "polygon";
+                break;
+            case 4:
+                type = "multipoint";
+                break;
+            case 5:
+                type = "multilinestring";
+                break;
+            case 6:
+                type = "multipolygon";
+        }
+        return type;
+    }
+
     thread_pool pool;
 
     string connection;
@@ -142,48 +166,40 @@ namespace ogr2postgis {
             GIntBig featureCount = layer->GetFeatureCount(1);
             int count{0};
             string type;
+            string typeDeteced;
+            string typeFromLayer;
             string tmpType;
             bool singleMultiMixed{false};
             OGRFeature *poFeature;
+            typeFromLayer = getGeomType(layer->GetGeomType());
             while ((poFeature = layer->GetNextFeature()) != nullptr) {
                 OGRGeometry *poGeometry = poFeature->GetGeometryRef();
                 if (poGeometry != nullptr) {
-                    switch (wkbFlatten(poGeometry->getGeometryType())) {
-                        case 1:
-                            type = "point";
-                            break;
-                        case 2:
-                            type = "linestring";
-                            break;
-                        case 3:
-                            type = "polygon";
-                            break;
-                        case 4:
-                            type = "multipoint";
-                            break;
-                        case 5:
-                            type = "multilinestring";
-                            break;
-                        case 6:
-                            type = "multipolygon";
-                    }
+                    typeDeteced = getGeomType(wkbFlatten(poGeometry->getGeometryType()));
                 }
                 count++;
                 if (count == maxFeatures || count == featureCount) {
                     break;
                 } else {
                     if (!tmpType.empty() &&
-                        (tmpType != type && tmpType != "multi" + type && tmpType != type.substr(5, type.length()))) {
-                        type = "geometry";
+                        (tmpType != typeDeteced && tmpType != "multi" + typeDeteced && tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
+                        typeDeteced = "geometry";
                         break;
                     }
-                    if (!tmpType.empty() && (tmpType == "multi" + type || tmpType == type.substr(5, type.length()))) {
+                    if (!tmpType.empty() && (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
                         singleMultiMixed = true;
                     }
-                    tmpType = type;
+                    tmpType = typeDeteced;
                     continue;
                 }
             }
+            if (singleMultiMixed || typeFromLayer.empty()) {
+                type = typeDeteced;
+            } else {
+                type = typeFromLayer;
+            }
+
+
             l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file, wktString == nullptr ? "" : string(wktString),
                  authStr, i, "", singleMultiMixed};
             {
@@ -247,7 +263,7 @@ namespace ogr2postgis {
         }
         // Print out
         Table table;
-        table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
+        table.add_row({"Driver", "Count", "Type", "TypeN", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
         table[0].format()
                 .font_align(FontAlign::center)
                 .font_style({FontStyle::underline, FontStyle::bold});
