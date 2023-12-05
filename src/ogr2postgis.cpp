@@ -11,7 +11,6 @@
 #include <chrono>
 
 
-using namespace std;
 using namespace argparse;
 using namespace ogr2postgis;
 using namespace tabulate;
@@ -22,7 +21,7 @@ ProgressBar readBar{
         option::BarWidth{50},
         option::ForegroundColor{indicators::Color::white},
         option::FontStyles{
-                vector<indicators::FontStyle>{indicators::FontStyle::bold}
+                std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
         },
         option::PostfixText{"Analyzing files"},
 };
@@ -30,7 +29,7 @@ ProgressBar importBar{
         option::BarWidth{50},
         option::ForegroundColor{indicators::Color::white},
         option::FontStyles{
-                vector<indicators::FontStyle>{indicators::FontStyle::bold}
+                std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
         },
         option::PostfixText{"Importing to PostgreSQL"},
 };
@@ -90,7 +89,7 @@ int main(int argc, char *argv[]) {
 
     auto path = program.get("path");
 
-    auto lCallback1 = [](vector<string> fileNames) {
+    auto lCallback1 = [](std::vector<std::string> fileNames) {
         readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
     };
 
@@ -98,7 +97,7 @@ int main(int argc, char *argv[]) {
         readBar.tick();
     };
 
-    auto lCallback3 = [](vector<struct layer> layers) {
+    auto lCallback3 = [](std::vector<struct layer> layers) {
         importBar.set_option(indicators::option::MaxProgress{layers.size()});
         std::cout << "Callback 3 called" << std::endl;
     };
@@ -107,11 +106,11 @@ int main(int argc, char *argv[]) {
         importBar.tick();
     };
 
-    vector<struct layer> layers = start(config, path, lCallback1, lCallback2, lCallback3, lCallback4);
+    std::vector<struct layer> layers = start(config, path, lCallback1, lCallback2, lCallback3, lCallback4);
 
     // Print out
     Table table;
-    auto startTime = chrono::high_resolution_clock::now();
+    auto startTime = std::chrono::high_resolution_clock::now();
     int i{0};
     table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
     table[0].format()
@@ -119,8 +118,8 @@ int main(int argc, char *argv[]) {
             .font_style({tabulate::FontStyle::underline, tabulate::FontStyle::bold});
     i = 0;
     for (const struct layer &l: layers) {
-        table.add_row({l.driverName.c_str(), to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
-                       to_string(l.layerIndex), l.layerName,
+        table.add_row({l.driverName.c_str(), std::to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
+                       std::to_string(l.layerIndex), l.layerName,
                        l.hasWkt, l.authStr, l.file, l.error}).format();
         i++;
         if (!l.error.empty()) {

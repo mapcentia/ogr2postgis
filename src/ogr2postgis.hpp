@@ -13,20 +13,19 @@
 #include "gdal/gdal_utils.h"
 
 
-using namespace std;
 
 namespace ogr2postgis {
 
-    mutex mtx;
+    std::mutex mtx;
     BS::thread_pool pool;
 
     struct config {
-        string connection;
-        string t_srs;
-        string s_srs;
-        string nln;
-        string schema;
-        string fallbackEncoding;
+        std::string connection;
+        std::string t_srs;
+        std::string s_srs;
+        std::string nln;
+        std::string schema;
+        std::string fallbackEncoding;
         bool import{ false };
         bool p_multi{false};
         bool append{false};
@@ -46,8 +45,8 @@ namespace ogr2postgis {
      * @param s2
      * @return
      */
-    bool caseInsCompare(const string &s1, const vector<string> &s2) {
-        for (string text: s2) {
+    bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
+        for (std::string text: s2) {
             if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
                 return true;
         }
@@ -69,8 +68,8 @@ namespace ogr2postgis {
      * @param t
      * @return
      */
-    string getGeomType(int t) {
-        string type;
+    std::string getGeomType(int t) {
+        std::string type;
         switch (t) {
             case 1:
                 type = "point";
@@ -95,20 +94,20 @@ namespace ogr2postgis {
 
     const int maxFeatures{1000};
     struct layer {
-        string driverName;
+        std::string driverName;
         GIntBig featureCount;
-        string type;
-        string layerName;
-        string hasWkt;
-        string file;
-        string wktString;
-        string authStr;
+        std::string type;
+        std::string layerName;
+        std::string hasWkt;
+        std::string file;
+        std::string wktString;
+        std::string authStr;
         int layerIndex;
-        string error;
+        std::string error;
         bool singleMultiMixed;
     };
 
-    vector<struct layer> layers;
+    std::vector<struct layer> layers;
     struct ctx {
         int layerIndex{};
         bool error{false};
@@ -123,7 +122,7 @@ namespace ogr2postgis {
      * @param callback
      */
     void
-    translate(config config, layer l, const string &encoding, int index, bool first, void (*callback)(layer l));
+    translate(config config, layer l, const std::string &encoding, int index, bool first, void (*callback)(layer l));
 
     /**
      *
@@ -132,7 +131,7 @@ namespace ogr2postgis {
      * @param msg
      */
     static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
-        string str(msg);
+        std::string str(msg);
         ctx *myctx = (ctx *) CPLGetErrorHandlerUserData();
         layers[myctx->layerIndex].error = str;
         myctx->error = true;
@@ -145,7 +144,7 @@ namespace ogr2postgis {
      * @param msg
      */
     static void openErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
-        string str(msg);
+        std::string str(msg);
         auto *l = (layer *) CPLGetErrorHandlerUserData();
         l->error = str;
     }
@@ -155,7 +154,7 @@ namespace ogr2postgis {
      * @param file
      * @param callback
      */
-    inline void openSource(string file, std::function<void ((layer l))> callback) {
+    inline void openSource(std::string file, std::function<void ((layer l))> callback) {
         layer l = {"", 0, "", "", "", file, "",
                    "", 0, "", false};
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
@@ -171,11 +170,11 @@ namespace ogr2postgis {
         char *wktString{nullptr};
         const char *authorityName;
         const char *authorityCode;
-        string authStr;
+        std::string authStr;
         int layerCount{poDS->GetLayerCount()};
-        string hasWkt{"True"};
-        string layerName;
-        string driverName{poDS->GetDriverName()};
+        std::string hasWkt{"True"};
+        std::string layerName;
+        std::string driverName{poDS->GetDriverName()};
         for (int i = 0; i < layerCount; i++) {
             OGRLayer *layer{poDS->GetLayer(i)};
             const OGRSpatialReference *reference = layer->GetSpatialRef();
@@ -185,7 +184,7 @@ namespace ogr2postgis {
                 authorityName = projection->GetAuthorityName(nullptr);
                 authorityCode = projection->GetAuthorityCode(nullptr);
                 if (authorityName != nullptr && authorityCode != nullptr) {
-                    authStr = string(authorityName) + ":" + string(authorityCode);
+                    authStr = std::string(authorityName) + ":" + std::string(authorityCode);
                 } else {
                     authStr = "-";
                 }
@@ -198,10 +197,10 @@ namespace ogr2postgis {
             // Count features
             GIntBig featureCount = layer->GetFeatureCount(1);
             int count{0};
-            string type;
-            string typeDeteced;
-            string typeFromLayer;
-            string tmpType;
+            std::string type;
+            std::string typeDeteced;
+            std::string typeFromLayer;
+            std::string tmpType;
             bool singleMultiMixed{false};
             OGRFeature *poFeature;
             typeFromLayer = getGeomType(layer->GetGeomType());
@@ -236,7 +235,7 @@ namespace ogr2postgis {
 
 
             l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
-                 wktString == nullptr ? "" : string(wktString),
+                 wktString == nullptr ? "" : std::string(wktString),
                  authStr, i, "", singleMultiMixed};
             {
                 std::lock_guard<std::mutex> lock(mtx);
@@ -257,19 +256,19 @@ namespace ogr2postgis {
      * @param callback4
      * @return
      */
-    vector<struct layer> start(config config, string path, std::function<void ((vector<string> fileNames))> callback1,
+    std::vector<struct layer> start(config config, std::string path, std::function<void ((std::vector<std::string> fileNames))> callback1,
                                std::function<void ((layer l))> callback2,
-                               void (*callback3)(vector<struct layer> layers), void (*callback4)(layer l)) {
+                               void (*callback3)(std::vector<struct layer> layers), void (*callback4)(layer l)) {
         GDALAllRegister();
-        vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
-        vector<string> fileNames;
-        string file;
-        string fileExtension;
-        if (path.find(".gdb") != string::npos) {
+        std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
+        std::vector<std::string> fileNames;
+        std::string file;
+        std::string fileExtension;
+        if (path.find(".gdb") != std::string::npos) {
             fileNames.push_back(path);
         } else {
             try {
-                for (auto &p: filesystem::recursive_directory_iterator(path)) {
+                for (auto &p: std::filesystem::recursive_directory_iterator(path)) {
                     if (!config.nln.empty() && config.import && !config.append) {
                         printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                         exit(1);
@@ -281,7 +280,7 @@ namespace ogr2postgis {
                     }
                 }
             } catch (const std::exception &e) {
-                if (!filesystem::exists(path)) {
+                if (!std::filesystem::exists(path)) {
                     printf("ERROR: Could not open directory or file.\n");
                     exit(1);
                 };
@@ -289,7 +288,7 @@ namespace ogr2postgis {
             }
         }
         callback1(fileNames);
-        for (const string &fileName: fileNames) {
+        for (const std::string &fileName: fileNames) {
             pool.push_task(openSource, fileName, callback2);
         }
         pool.wait_for_tasks();
@@ -311,10 +310,10 @@ namespace ogr2postgis {
     }
 
     inline void
-    translate(config config, layer l, const string &encoding, int index, bool first, void (*callback)(layer l)) {
+    translate(config config, layer l, const std::string &encoding, int index, bool first, void (*callback)(layer l)) {
         char **argv{nullptr};
-        string altName = l.layerName;
-        string env = "PGCLIENTENCODING=" + encoding;
+        std::string altName = l.layerName;
+        std::string env = "PGCLIENTENCODING=" + encoding;
         ctx myctx = {
                 .layerIndex =  index,
                 .error = false,
@@ -325,7 +324,7 @@ namespace ogr2postgis {
         if (!config.nln.empty()) {
             altName = config.nln;
             if (l.layerIndex > 0) {
-                altName = altName + "_" + to_string(l.layerIndex);
+                altName = altName + "_" + std::to_string(l.layerIndex);
             }
         }
         altName = config.schema + "." + altName;
