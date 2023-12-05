@@ -149,9 +149,9 @@ void Frame::OnOpen(UpdateListEvent &event) {
     }
     layer l = event.GetLayer();
     long index = listCtrl->InsertItem(i, l.driverName);
-    listCtrl->SetItem(index, 1, to_string(l.featureCount));
+    listCtrl->SetItem(index, 1, std::to_string(l.featureCount));
     listCtrl->SetItem(index, 2, l.type + (l.singleMultiMixed ? "(m)" : ""));
-    listCtrl->SetItem(index, 3, to_string(l.layerIndex));
+    listCtrl->SetItem(index, 3, std::to_string(l.layerIndex));
     listCtrl->SetItem(index, 4, l.layerName);
     listCtrl->SetItem(index, 5, l.hasWkt);
     listCtrl->SetItem(index, 6, l.authStr);
@@ -164,18 +164,18 @@ void Frame::OnStart(wxCommandEvent &event) {
     i = 0;
     std::thread([this]() {
         config config;
-        auto lCallback1 = [this](vector<string> fileNames) {
+        auto lCallback1 = [this](std::vector<std::string> fileNames) {
         };
         auto lCallback2 = [this](layer l) {
             UpdateListEvent event(UPDATE_LIST_TYPE, wxID_ANY);
             event.SetLayer(l);
             wxPostEvent(this, event);
         };
-        auto lCallback3 = [](vector<struct layer> layers) {
+        auto lCallback3 = [](std::vector<struct layer> layers) {
         };
         auto lCallback4 = [](layer l) {
         };
-        vector<struct layer> layers = start(config, "/home/mh/Documents/Backup/mh/Data", lCallback1, lCallback2,
+        std::vector<struct layer> layers = start(config, "/home/mh/Documents/Backup/mh/Data", lCallback1, lCallback2,
                                             lCallback3,
                                             lCallback4);
     }).detach();
