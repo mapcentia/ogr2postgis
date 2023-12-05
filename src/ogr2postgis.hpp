@@ -1,27 +1,51 @@
 /*
  * @author     Martin Høgh <mh@mapcentia.com>
- * @copyright  2013-2022 MapCentia ApS
+ * @copyright  2013-2023 MapCentia ApS
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
 
 #include <list>
 #include <filesystem>
-#include <chrono>
 #include <iostream>
 #include <vector>
 #include "gdal/ogrsf_frmts.h"
-#include "tabulate.hpp"
 #include "thread_pool.hpp"
 #include "gdal/gdal_utils.h"
-#include "indicators.hpp"
+
 
 using namespace std;
-using namespace tabulate;
 
 namespace ogr2postgis {
-    mutex mutex;
-    auto startTime = chrono::high_resolution_clock::now();
+
+    mutex mtx;
+    BS::thread_pool pool;
+
+    struct config {
+        string connection;
+        string t_srs;
+        string s_srs;
+        string nln;
+        string schema;
+        string fallbackEncoding;
+        bool import{ false };
+        bool p_multi{false};
+        bool append{false};
+    };
+
+    /**
+     *
+     * @param a
+     * @param b
+     * @return
+     */
     inline bool caseInsCharCompareN(char a, char b);
+
+    /**
+     *
+     * @param s1
+     * @param s2
+     * @return
+     */
     bool caseInsCompare(const string &s1, const vector<string> &s2) {
         for (string text: s2) {
             if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
@@ -30,11 +54,22 @@ namespace ogr2postgis {
         return false;
     }
 
+    /**
+     *
+     * @param a
+     * @param b
+     * @return
+     */
     bool caseInsCharCompareN(char a, char b) {
         return (toupper(a) == toupper(b));
     }
 
-    string getGeomType (int t) {
+    /**
+     *
+     * @param t
+     * @return
+     */
+    string getGeomType(int t) {
         string type;
         switch (t) {
             case 1:
@@ -58,17 +93,6 @@ namespace ogr2postgis {
         return type;
     }
 
-    thread_pool pool;
-
-    string connection;
-    string t_srs;
-    string s_srs;
-    string nln;
-    string schema;
-    string fallbackEncoding;
-    bool import{false};
-    bool p_multi{false};
-    bool append{false};
     const int maxFeatures{1000};
     struct layer {
         string driverName;
@@ -83,15 +107,30 @@ namespace ogr2postgis {
         string error;
         bool singleMultiMixed;
     };
+
     vector<struct layer> layers;
     struct ctx {
         int layerIndex{};
         bool error{false};
     };
 
+    /**
+     *
+     * @param l
+     * @param encoding
+     * @param index
+     * @param first
+     * @param callback
+     */
     void
-    translate(layer l, const string &encoding, int index, bool first);
+    translate(config config, layer l, const string &encoding, int index, bool first, void (*callback)(layer l));
 
+    /**
+     *
+     * @param e
+     * @param n
+     * @param msg
+     */
     static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
         string str(msg);
         ctx *myctx = (ctx *) CPLGetErrorHandlerUserData();
@@ -99,42 +138,36 @@ namespace ogr2postgis {
         myctx->error = true;
     }
 
+    /**
+     *
+     * @param e
+     * @param n
+     * @param msg
+     */
     static void openErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
         string str(msg);
         auto *l = (layer *) CPLGetErrorHandlerUserData();
         l->error = str;
     }
 
-    indicators::ProgressBar readBar{
-            indicators::option::BarWidth{50},
-            indicators::option::ForegroundColor{indicators::Color::white},
-            indicators::option::FontStyles{
-                    vector<indicators::FontStyle>{indicators::FontStyle::bold}
-            },
-            indicators::option::PostfixText{"Analyzing files"},
-    };
-    indicators::ProgressBar importBar{
-            indicators::option::BarWidth{50},
-            indicators::option::ForegroundColor{indicators::Color::white},
-            indicators::option::FontStyles{
-                    vector<indicators::FontStyle>{indicators::FontStyle::bold}
-            },
-            indicators::option::PostfixText{"Importing to PostgreSQL"},
-    };
-
-    inline void openSource(string file) {
+    /**
+     *
+     * @param file
+     * @param callback
+     */
+    inline void openSource(string file, std::function<void ((layer l))> callback) {
         layer l = {"", 0, "", "", "", file, "",
                    "", 0, "", false};
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
         auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
         if (!l.error.empty() || poDS == nullptr) {
-            l.error= !l.error.empty() ? l.error : "Unable to open file";
-            std::scoped_lock lock;
+            l.error = !l.error.empty() ? l.error : "Unable to open file";
+            std::lock_guard<std::mutex> lock(mtx);
             layers.push_back(l);
-            readBar.tick();
+            callback(l);
             return;
         }
-        OGRSpatialReference *projection;
+        const OGRSpatialReference *projection;
         char *wktString{nullptr};
         const char *authorityName;
         const char *authorityCode;
@@ -182,11 +215,13 @@ namespace ogr2postgis {
                     break;
                 } else {
                     if (!tmpType.empty() &&
-                        (tmpType != typeDeteced && tmpType != "multi" + typeDeteced && tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
+                        (tmpType != typeDeteced && tmpType != "multi" + typeDeteced &&
+                         tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
                         typeDeteced = "geometry";
                         break;
                     }
-                    if (!tmpType.empty() && (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
+                    if (!tmpType.empty() &&
+                        (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
                         singleMultiMixed = true;
                     }
                     tmpType = typeDeteced;
@@ -200,19 +235,31 @@ namespace ogr2postgis {
             }
 
 
-            l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file, wktString == nullptr ? "" : string(wktString),
+            l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
+                 wktString == nullptr ? "" : string(wktString),
                  authStr, i, "", singleMultiMixed};
             {
-                std::scoped_lock lock;
+                std::lock_guard<std::mutex> lock(mtx);
                 layers.push_back(l);
             }
             OGRFeature::DestroyFeature(poFeature);
         }
-        readBar.tick();
+        callback(l);
         GDALClose(poDS);
     }
 
-    void start(string path) {
+    /**
+     *
+     * @param path
+     * @param callback1
+     * @param callback2
+     * @param callback3
+     * @param callback4
+     * @return
+     */
+    vector<struct layer> start(config config, string path, std::function<void ((vector<string> fileNames))> callback1,
+                               std::function<void ((layer l))> callback2,
+                               void (*callback3)(vector<struct layer> layers), void (*callback4)(layer l)) {
         GDALAllRegister();
         vector<string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
         vector<string> fileNames;
@@ -223,7 +270,7 @@ namespace ogr2postgis {
         } else {
             try {
                 for (auto &p: filesystem::recursive_directory_iterator(path)) {
-                    if (!nln.empty() && import && !append) {
+                    if (!config.nln.empty() && config.import && !config.append) {
                         printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                         exit(1);
                     }
@@ -241,52 +288,30 @@ namespace ogr2postgis {
                 fileNames.push_back(path);
             }
         }
-        readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
+        callback1(fileNames);
         for (const string &fileName: fileNames) {
-            pool.push_task(openSource, fileName);
+            pool.push_task(openSource, fileName, callback2);
         }
         pool.wait_for_tasks();
-        std::cout << "\r" << std::flush;
         int i{0};
         // Import in PostGIS
-        if (import) {
-            importBar.set_option(indicators::option::MaxProgress{layers.size()});
+        if (config.import) {
+            callback3(layers);
             for (const struct layer &l: layers) {
                 if (l.error.empty()) {
-                    pool.push_task(translate, l, "UTF8", i, true);
+                    pool.push_task(translate, config, l, "UTF8", i, true, callback4);
                 } else {
-                    importBar.tick();
+                    callback4(l);
                 }
                 i++;
             };
             pool.wait_for_tasks();
         }
-        // Print out
-        Table table;
-        table.add_row({"Driver", "Count", "Type", "TypeN", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
-        table[0].format()
-                .font_align(FontAlign::center)
-                .font_style({FontStyle::underline, FontStyle::bold});
-        i = 0;
-        for (const struct layer &l: layers) {
-            table.add_row({l.driverName.c_str(), to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
-                           to_string(l.layerIndex), l.layerName,
-                           l.hasWkt, l.authStr, l.file, l.error}).format();
-            i++;
-            if (!l.error.empty()) {
-                table[i][8].format().font_color(Color::red);
-            }
-
-        }
-        std::cout << "\r" << std::flush;
-        std::cout << table << std::endl;
-        auto stopTime = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stopTime - startTime);
-        printf("Total of %zu layer(s) in %zu file(s) processed in %ldms using %s\n", layers.size(), fileNames.size(),
-               lround(duration.count()/1000), GDALVersionInfo("--version"));
+        return layers;
     }
+
     inline void
-    translate(layer l, const string &encoding, int index, bool first) {
+    translate(config config, layer l, const string &encoding, int index, bool first, void (*callback)(layer l)) {
         char **argv{nullptr};
         string altName = l.layerName;
         string env = "PGCLIENTENCODING=" + encoding;
@@ -297,26 +322,28 @@ namespace ogr2postgis {
         CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
         putenv((char *) env.c_str());
         setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
-        if (!nln.empty()) {
-            altName = nln;
+        if (!config.nln.empty()) {
+            altName = config.nln;
             if (l.layerIndex > 0) {
                 altName = altName + "_" + to_string(l.layerIndex);
             }
         }
-        altName = schema + "." + altName;
-        if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") && (l.singleMultiMixed || p_multi)) {
+        altName = config.schema + "." + altName;
+        if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") &&
+            (l.singleMultiMixed || config.p_multi)) {
             l.type = "multi" + l.type;
         }
-        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != "" ? l.wktString.c_str() : s_srs.c_str());
+        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != "" ? l.wktString.c_str()
+                                                                                 : config.s_srs.c_str());
         if (targetSrs == nullptr) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
-            importBar.tick();
+            callback(l);
             return;
         }
         argv = CSLAddString(argv, "-f");
         argv = CSLAddString(argv, "PostgreSQL");
-        if (append) {
+        if (config.append) {
             argv = CSLAddString(argv, "-update");
             argv = CSLAddString(argv, "-append");
         }
@@ -334,13 +361,13 @@ namespace ogr2postgis {
         argv = CSLAddString(argv, "-t_srs");
         argv = CSLAddString(argv,
                             reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0 ? l.authStr.c_str() :
-                                                           !t_srs.empty() ? t_srs.c_str()
-                                                                          : "EPSG:4326")); // Convert to this
+                                                           !config.t_srs.empty() ? config.t_srs.c_str()
+                                                                                 : "EPSG:4326")); // Convert to this
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
         argv = CSLAddString(argv, l.layerName.c_str());
 
-        GDALDatasetH pgDs = GDALOpenEx(connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR,
+        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR,
                                        nullptr, nullptr, nullptr);
         GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
 
@@ -353,9 +380,9 @@ namespace ogr2postgis {
         // If error we try with the fallback encoding
         if (myctx.error && first) {
             layers[index].error = "";
-            translate(l, fallbackEncoding, index, false);
+            translate(config, l, config.fallbackEncoding, index, false, callback);
             return;
         }
-        importBar.tick();
+        callback(l);
     }
 }
