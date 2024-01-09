@@ -8,9 +8,9 @@
 #include <filesystem>
 #include <iostream>
 #include <vector>
-#include "gdal/ogrsf_frmts.h"
+#include "ogrsf_frmts.h"
 #include "thread_pool.hpp"
-#include "gdal/gdal_utils.h"
+#include "gdal_utils.h"
 
 
 
@@ -240,10 +240,10 @@ namespace ogr2postgis {
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 layers.push_back(l);
+                callback(l);
             }
             OGRFeature::DestroyFeature(poFeature);
         }
-        callback(l);
         GDALClose(poDS);
     }
 
