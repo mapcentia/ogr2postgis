@@ -360,6 +360,7 @@ namespace ogr2postgis {
             argv = CSLAddString(argv, "-append");
         }
         argv = CSLAddString(argv, "-overwrite");
+        argv = CSLAddString(argv, "-skipfailures");
         argv = CSLAddString(argv, "-lco");
         argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         argv = CSLAddString(argv, "-lco");
