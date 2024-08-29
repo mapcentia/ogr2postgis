@@ -270,7 +270,7 @@ namespace ogr2postgis {
         std::function<void ((layer l))> callback4
     ) {
         GDALAllRegister();
-        std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
+        std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv"}};
         std::vector<std::string> fileNames;
         std::string file;
         std::string fileExtension;
