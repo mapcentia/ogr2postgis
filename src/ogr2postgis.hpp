@@ -8,14 +8,12 @@
 #include <filesystem>
 #include <iostream>
 #include <vector>
-#include "ogrsf_frmts.h"
+#include "gdal/ogrsf_frmts.h"
 #include "thread_pool.hpp"
-#include "gdal_utils.h"
-
+#include "gdal/gdal_utils.h"
 
 
 namespace ogr2postgis {
-
     std::mutex mtx;
     BS::thread_pool pool;
 
@@ -26,9 +24,10 @@ namespace ogr2postgis {
         std::string nln;
         std::string schema;
         std::string fallbackEncoding;
-        bool import{ false };
+        bool import{false};
         bool p_multi{false};
         bool append{false};
+        bool json;
     };
 
     /**
@@ -93,6 +92,7 @@ namespace ogr2postgis {
     }
 
     const int maxFeatures{1000};
+
     struct layer {
         std::string driverName;
         GIntBig featureCount;
@@ -108,6 +108,7 @@ namespace ogr2postgis {
     };
 
     std::vector<struct layer> layers;
+
     struct ctx {
         int layerIndex{};
         bool error{false};
@@ -122,7 +123,8 @@ namespace ogr2postgis {
      * @param callback
      */
     void
-    translate(config config, layer l, const std::string &encoding, int index, bool first, void (*callback)(layer l));
+    translate(config config, layer l, const std::string &encoding, int index, bool first,
+              std::function<void ((layer l))> callback);
 
     /**
      *
@@ -155,8 +157,10 @@ namespace ogr2postgis {
      * @param callback
      */
     inline void openSource(std::string file, std::function<void ((layer l))> callback) {
-        layer l = {"", 0, "", "", "", file, "",
-                   "", 0, "", false};
+        layer l = {
+            "", 0, "", "", "", file, "",
+            "", 0, "", false
+        };
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
         auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
         if (!l.error.empty() || poDS == nullptr) {
@@ -234,10 +238,11 @@ namespace ogr2postgis {
             }
 
 
-            l = {driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
-                 wktString == nullptr ? "" : std::string(wktString),
-                 authStr, i, "", singleMultiMixed};
-            {
+            l = {
+                driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
+                wktString == nullptr ? "" : std::string(wktString),
+                authStr, i, "", singleMultiMixed
+            }; {
                 std::lock_guard<std::mutex> lock(mtx);
                 layers.push_back(l);
                 callback(l);
@@ -256,9 +261,14 @@ namespace ogr2postgis {
      * @param callback4
      * @return
      */
-    std::vector<struct layer> start(config config, std::string path, std::function<void ((std::vector<std::string> fileNames))> callback1,
-                               std::function<void ((layer l))> callback2,
-                               void (*callback3)(std::vector<struct layer> layers), void (*callback4)(layer l)) {
+    std::vector<struct layer> start(
+        config config,
+        std::string path,
+        std::function<void ((std::vector<std::string> fileNames))> callback1,
+        std::function<void ((layer l))> callback2,
+        std::function<void ((std::vector<struct layer> layers))> callback3,
+        std::function<void ((layer l))> callback4
+    ) {
         GDALAllRegister();
         std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb"}};
         std::vector<std::string> fileNames;
@@ -270,7 +280,8 @@ namespace ogr2postgis {
             try {
                 for (auto &p: std::filesystem::recursive_directory_iterator(path)) {
                     if (!config.nln.empty() && config.import && !config.append) {
-                        printf("ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
+                        printf(
+                            "ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                         exit(1);
                     }
                     file = p.path().string();
@@ -310,13 +321,14 @@ namespace ogr2postgis {
     }
 
     inline void
-    translate(config config, layer l, const std::string &encoding, int index, bool first, void (*callback)(layer l)) {
+    translate(config config, layer l, const std::string &encoding, int index, bool first,
+              std::function<void ((layer l))> callback) {
         char **argv{nullptr};
         std::string altName = l.layerName;
         std::string env = "PGCLIENTENCODING=" + encoding;
         ctx myctx = {
-                .layerIndex =  index,
-                .error = false,
+            .layerIndex = index,
+            .error = false,
         };
         CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
         putenv((char *) env.c_str());
@@ -332,8 +344,9 @@ namespace ogr2postgis {
             (l.singleMultiMixed || config.p_multi)) {
             l.type = "multi" + l.type;
         }
-        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != "" ? l.wktString.c_str()
-                                                                                 : config.s_srs.c_str());
+        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != ""
+                                                                   ? l.wktString.c_str()
+                                                                   : config.s_srs.c_str());
         if (targetSrs == nullptr) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
@@ -359,9 +372,11 @@ namespace ogr2postgis {
         argv = CSLAddString(argv, targetSrs);
         argv = CSLAddString(argv, "-t_srs");
         argv = CSLAddString(argv,
-                            reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0 ? l.authStr.c_str() :
-                                                           !config.t_srs.empty() ? config.t_srs.c_str()
-                                                                                 : "EPSG:4326")); // Convert to this
+                            reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0
+                                                               ? l.authStr.c_str()
+                                                               : !config.t_srs.empty()
+                                                                     ? config.t_srs.c_str()
+                                                                     : "EPSG:4326")); // Convert to this
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
         argv = CSLAddString(argv, l.layerName.c_str());

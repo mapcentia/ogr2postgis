@@ -18,50 +18,52 @@ using namespace indicators;
 
 
 ProgressBar readBar{
-        option::BarWidth{50},
-        option::ForegroundColor{indicators::Color::white},
-        option::FontStyles{
-                std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
-        },
-        option::PostfixText{"Analyzing files"},
+    option::BarWidth{50},
+    option::ForegroundColor{indicators::Color::white},
+    option::FontStyles{
+        std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
+    },
+    option::PostfixText{"Analyzing files"},
 };
 ProgressBar importBar{
-        option::BarWidth{50},
-        option::ForegroundColor{indicators::Color::white},
-        option::FontStyles{
-                std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
-        },
-        option::PostfixText{"Importing to PostgreSQL"},
+    option::BarWidth{50},
+    option::ForegroundColor{indicators::Color::white},
+    option::FontStyles{
+        std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
+    },
+    option::PostfixText{"Importing to PostgreSQL"},
 };
 
 int main(int argc, char *argv[]) {
     ArgumentParser program("ogr2postgis", "2022.5.0");
     program.add_argument("-o", "--schema").help("Output PostgreSQL schema.").default_value(
-            std::string{"public"});
+        std::string{"public"});
     program.add_argument("-t", "--t_srs").help(
-            "Fallback target SRS. Will be used if no authority name/code is available.").default_value(
-            std::string{"EPSG:4326"});
+        "Fallback target SRS. Will be used if no authority name/code is available.").default_value(
+        std::string{"EPSG:4326"});
     program.add_argument("-s", "--s_srs").help(
-            "Fallback source SRS. Will be used if file doesn't contain projection information.");
+        "Fallback source SRS. Will be used if file doesn't contain projection information.");
     program.add_argument("-n", "--nln").help(
-            "Alternative table name. Can only be used when importing single file - not directories unless --append is used.");
+        "Alternative table name. Can only be used when importing single file - not directories unless --append is used.");
     program.add_argument("-e", "--encoding").help("Fallback encoding. Will be used if UTF8 fails").default_value(
-            std::string{"LATIN1"});
+        std::string{"LATIN1"});
     program.add_argument("-i", "--import").help("Import found files into PostgreSQL/PostGIS").default_value(
-            false).implicit_value(true);
+        false).implicit_value(true);
     program.add_argument("-p", "--p_multi").help("Promote single geometries to multi part.").default_value(
-            false).implicit_value(true);
+        false).implicit_value(true);
     program.add_argument("-a", "--append").help("Append to existing layer instead of creating new.").default_value(
-            false).implicit_value(true);
+        false).implicit_value(true);
+    program.add_argument("-j", "--json").help("Out JSON instead of ascii tables. Useful if output should be processed.")
+            .default_value(
+                false).implicit_value(true);
     program.add_argument("-c", "--connection").help(
-            "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
+        "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
-//    program.add_epilog("Possible things include betingalw, chiz, and res.");
+    //    program.add_epilog("Possible things include betingalw, chiz, and res.");
 
     try {
         program.parse_args(argc, argv);
-    }
-    catch (const std::runtime_error &err) {
+    } catch (const std::runtime_error &err) {
         std::cerr << err.what() << std::endl;
         std::cerr << program;
         std::exit(1);
@@ -86,53 +88,76 @@ int main(int argc, char *argv[]) {
     config.import = program.get<bool>("--import");
     config.append = program.get<bool>("--append");
     config.p_multi = program.get<bool>("--p_multi");
+    config.json = program.get<bool>("--json");
 
     auto path = program.get("path");
 
-    auto lCallback1 = [](std::vector<std::string> fileNames) {
-        readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
+    auto lCallback1 = [config](std::vector<std::string> fileNames) {
+        if (!config.json) readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
     };
 
-    auto lCallback2 = [](layer l) {
-        readBar.tick();
+    auto lCallback2 = [config](layer l) {
+        if (!config.json) readBar.tick();
     };
 
-    auto lCallback3 = [](std::vector<struct layer> layers) {
-        importBar.set_option(indicators::option::MaxProgress{layers.size()});
-        std::cout << "Callback 3 called" << std::endl;
+    auto lCallback3 = [config](std::vector<struct layer> layers) {
+        if (!config.json) importBar.set_option(indicators::option::MaxProgress{layers.size()});
     };
 
-    auto lCallback4 = [](layer l) {
-        importBar.tick();
+    auto lCallback4 = [config](layer l) {
+        if (!config.json) importBar.tick();
     };
 
     std::vector<struct layer> layers = start(config, path, lCallback1, lCallback2, lCallback3, lCallback4);
 
     // Print out
-    Table table;
-    auto startTime = std::chrono::high_resolution_clock::now();
-    int i{0};
-    table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
-    table[0].format()
-            .font_align(FontAlign::center)
-            .font_style({tabulate::FontStyle::underline, tabulate::FontStyle::bold});
-    i = 0;
-    for (const struct layer &l: layers) {
-        table.add_row({l.driverName.c_str(), std::to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
-                       std::to_string(l.layerIndex), l.layerName,
-                       l.hasWkt, l.authStr, l.file, l.error}).format();
-        i++;
-        if (!l.error.empty()) {
-            table[i][8].format().font_color(tabulate::Color::red);
+    if (!config.json) {
+        Table table;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        int i{0};
+        table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
+        table[0].format()
+                .font_align(FontAlign::center)
+                .font_style({tabulate::FontStyle::underline, tabulate::FontStyle::bold});
+        i = 0;
+        for (const layer &l: layers) {
+            table.add_row({
+                l.driverName.c_str(), std::to_string(l.featureCount), l.type + (l.singleMultiMixed ? "(m)" : ""),
+                std::to_string(l.layerIndex), l.layerName,
+                l.hasWkt, l.authStr, l.file, l.error
+            }).format();
+            i++;
+            if (!l.error.empty()) {
+                table[i][8].format().font_color(tabulate::Color::red);
+            }
         }
-
+        std::cout << "\r" << std::flush;
+        std::cout << table << std::endl;
+        auto stopTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stopTime - startTime);
+        //    printf("Total of %zu layer(s) in %zu file(s) processed in %ldms using %s\n", layers.size(), fileNames.size(),
+        //           lround(duration.count()/1000), GDALVersionInfo("--version"));
+    } else {
+        std::cout << "[" << std::flush;
+        for (int i = 0; i < layers.size(); i++) {
+            layer l = layers[i];
+            std::cout << "{" << std::flush;
+            std::cout << "\"driver\":\"" + l.driverName + "\"," << std::flush;
+            std::cout << "\"featureCount\":" + std::to_string(l.featureCount) + "," << std::flush;
+            std::cout << "\"type\":\"" + l.type + (l.singleMultiMixed ? "(m)" : "") + "\"," << std::flush;
+            std::cout << "\"layerIndex\":" + std::to_string(l.layerIndex) + "," << std::flush;
+            std::cout << "\"layerName\":\"" + l.layerName + "\"," << std::flush;
+            std::cout << "\"hasWkt\":\"" + l.hasWkt + "\"," << std::flush;
+            std::cout << "\"authStr\":\"" + l.authStr + "\"," << std::flush;
+            std::cout << "\"file\":\"" + l.file + "\"," << std::flush;
+            std::cout << "\"error\":" + (l.error != "" ? "\"" + l.error + "\"" : "null") + "" << std::flush;
+            std::cout << "}" << std::flush;
+            if (i < layers.size() - 1) {
+                std::cout << "," << std::flush;
+            }
+        }
+        std::cout << "]" << std::flush;
     }
-    std::cout << "\r" << std::flush;
-    std::cout << table << std::endl;
-    auto stopTime = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stopTime - startTime);
-//    printf("Total of %zu layer(s) in %zu file(s) processed in %ldms using %s\n", layers.size(), fileNames.size(),
-//           lround(duration.count()/1000), GDALVersionInfo("--version"));
 }
 
 

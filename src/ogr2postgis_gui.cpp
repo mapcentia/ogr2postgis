@@ -23,17 +23,17 @@ wxIMPLEMENT_APP(App);
 class UpdateListEvent : public wxEvent {
 public:
     UpdateListEvent(wxEventType eventType, int id)
-            : wxEvent(id, eventType) {
+        : wxEvent(id, eventType), m_layer() {
     }
 
     // You *must* copy here the data to be transported
     UpdateListEvent(const UpdateListEvent &event)
-            : wxEvent(event) { this->SetLayer(event.GetLayer()); }
+        : wxEvent(event) { this->SetLayer(event.GetLayer()); }
 
     // Required for sending with wxPostEvent()
-    wxEvent *Clone() const { return new UpdateListEvent(*this); }
+    [[nodiscard]] wxEvent *Clone() const override { return new UpdateListEvent(*this); }
 
-    layer GetLayer() const { return m_layer; }
+    [[nodiscard]] layer GetLayer() const { return m_layer; }
 
     void SetLayer(const layer &l) { m_layer = l; }
 
@@ -43,7 +43,7 @@ private:
 
 wxDEFINE_EVENT(UPDATE_LIST_TYPE, UpdateListEvent);
 
-class Frame : public wxFrame {
+class Frame final : public wxFrame {
 public:
     Frame();
 
@@ -53,7 +53,7 @@ private:
 
     void OnStart(wxCommandEvent &event);
 
-    void OnOpen(UpdateListEvent &event);
+    void OnOpen(const UpdateListEvent &event);
 
     // Function to handle the size event
     void OnSize(wxSizeEvent &event) {
@@ -64,7 +64,7 @@ private:
     }
 
     // Function to handle column click events for sorting
-    void OnColumnClick(wxListEvent &event) {
+    void OnColumnClick(const wxListEvent &event) {
         std::cout << "Click" << std::endl;
         int col = event.GetColumn();
         // You can implement your own sorting logic here based on the clicked column
@@ -78,12 +78,13 @@ private:
         std::cout << "Compare" << std::endl;
         // Implement your own comparison logic here
         // You can retrieve item data and compare based on the specified column
-//        wxString text1 = wxGetApp().GetTopWindow()->listCtrl->GetItemText(item1, col);
-//        wxString text2 = wxGetApp().GetTopWindow()->listCtrl->GetItemText(item2, col);
-//
-//        return text1.CmpNoCase(text2); // Case-insensitive comparison for strings
+        //        wxString text1 = wxGetApp().GetTopWindow()->listCtrl->GetItemText(item1, col);
+        //        wxString text2 = wxGetApp().GetTopWindow()->listCtrl->GetItemText(item2, col);
+        //
+        //        return text1.CmpNoCase(text2); // Case-insensitive comparison for strings
     }
-//DECLARE_EVENT_TABLE()
+
+    //DECLARE_EVENT_TABLE()
 };
 
 // Event table for Frame
@@ -97,23 +98,23 @@ enum {
 
 
 bool App::OnInit() {
-    Frame *frame = new Frame();
+    auto *frame = new Frame();
     frame->Show(true);
     return true;
 }
 
 Frame::Frame()
-        : wxFrame(nullptr, wxID_ANY, "ogr2postgis") {
-    wxMenu *menuFile = new wxMenu;
+    : wxFrame(nullptr, wxID_ANY, "ogr2postgis") {
+    auto *menuFile = new wxMenu;
     menuFile->Append(ID_Start, "Start",
                      "Help start");
     menuFile->AppendSeparator();
     menuFile->Append(wxID_EXIT);
-    wxMenuBar *menuBar = new wxMenuBar;
+    auto *menuBar = new wxMenuBar;
     menuBar->Append(menuFile, "&File");
-    SetMenuBar(menuBar);
+    wxFrameBase::SetMenuBar(menuBar);
 
-    wxBoxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);
+    auto *mainSizer = new wxBoxSizer(wxVERTICAL);
 
     listCtrl = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT);
     // Add columns to the list control
@@ -128,7 +129,7 @@ Frame::Frame()
     listCtrl->InsertColumn(8, "Error", wxLIST_FORMAT_LEFT, 100);
 
     // Enable column clicks for sorting
-//    listCtrl->Bind(wxEVT_LIST_COL_CLICK, &Frame::OnColumnClick, this);
+    //    listCtrl->Bind(wxEVT_LIST_COL_CLICK, &Frame::OnColumnClick, this);
 
     Bind(wxEVT_SIZE, &Frame::OnSize, this);
     // Add the wxListCtrl to the main sizer
@@ -141,14 +142,13 @@ Frame::Frame()
     Bind(UPDATE_LIST_TYPE, &Frame::OnOpen, this, wxID_ANY);
 }
 
-void Frame::OnOpen(UpdateListEvent &event) {
-    {
+void Frame::OnOpen(const UpdateListEvent &event) { {
         std::lock_guard<std::mutex> lock(mtx);
         i++;
         // Unlock automatically when 'lock' goes out of scope
     }
     layer l = event.GetLayer();
-    long index = listCtrl->InsertItem(i, l.driverName);
+    const long index = listCtrl->InsertItem(i, l.driverName);
     listCtrl->SetItem(index, 1, std::to_string(l.featureCount));
     listCtrl->SetItem(index, 2, l.type + (l.singleMultiMixed ? "(m)" : ""));
     listCtrl->SetItem(index, 3, std::to_string(l.layerIndex));
@@ -176,10 +176,9 @@ void Frame::OnStart(wxCommandEvent &event) {
         auto lCallback4 = [](layer l) {
         };
         std::vector<struct layer> layers = start(config, "/home/mh/Documents/Backup/mh/Data", lCallback1, lCallback2,
-                                            lCallback3,
-                                            lCallback4);
+                                                 lCallback3,
+                                                 lCallback4);
     }).detach();
-
 }
 
 void Frame::OnExit(wxCommandEvent &event) {
