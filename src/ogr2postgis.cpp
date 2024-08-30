@@ -56,6 +56,7 @@ int main(int argc, char *argv[]) {
     program.add_argument("-j", "--json").help("Out JSON instead of ascii tables. Useful if output should be processed.")
             .default_value(
                 false).implicit_value(true);
+    program.add_argument("-d", "--autodetect").help("Auto detect types in CSV files.").default_value(false).implicit_value(true);
     program.add_argument("-c", "--connection").help(
         "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
@@ -89,6 +90,7 @@ int main(int argc, char *argv[]) {
     config.append = program.get<bool>("--append");
     config.p_multi = program.get<bool>("--p_multi");
     config.json = program.get<bool>("--json");
+    config.autodetect = program.get<bool>("--autodetect");
 
     auto path = program.get("path");
 

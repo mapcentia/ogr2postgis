@@ -29,6 +29,7 @@ namespace ogr2postgis {
         bool p_multi{false};
         bool append{false};
         bool json;
+        bool autodetect;
     };
 
     /**
@@ -384,11 +385,13 @@ namespace ogr2postgis {
         argv = CSLAddString(argv, altName.c_str());
         argv = CSLAddString(argv, l.layerName.c_str());
 
-        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
+                                       GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
 
         char **papszOptions = nullptr;
-       // papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", "YES");
+        papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", config.autodetect ? "YES" : "NO");
+
 
         GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
 
