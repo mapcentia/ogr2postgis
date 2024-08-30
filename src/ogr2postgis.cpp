@@ -56,11 +56,13 @@ int main(int argc, char *argv[]) {
     program.add_argument("-j", "--json").help("Out JSON instead of ascii tables. Useful if output should be processed.")
             .default_value(
                 false).implicit_value(true);
-    program.add_argument("-d", "--autodetect").help("Auto detect types in CSV files.").default_value(false).implicit_value(true);
+    program.add_argument("-d", "--autodetect").help("Auto detect types in CSV files.").default_value(false).
+            implicit_value(true);
     program.add_argument("-c", "--connection").help(
         "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
-    //    program.add_epilog("Possible things include betingalw, chiz, and res.");
+    std::string v = GDALVersionInfo("--version");
+    program.add_epilog("Build with " + v);
 
     try {
         program.parse_args(argc, argv);
@@ -94,19 +96,19 @@ int main(int argc, char *argv[]) {
 
     auto path = program.get("path");
 
-    auto lCallback1 = [config](const std::vector<std::string>& fileNames) {
+    auto lCallback1 = [config](const std::vector<std::string> &fileNames) {
         if (!config.json) readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
     };
 
-    auto lCallback2 = [config](const layer& l) {
+    auto lCallback2 = [config](const layer &l) {
         if (!config.json) readBar.tick();
     };
 
-    auto lCallback3 = [config](const std::vector<struct layer>& layers) {
+    auto lCallback3 = [config](const std::vector<struct layer> &layers) {
         if (!config.json) importBar.set_option(indicators::option::MaxProgress{layers.size()});
     };
 
-    auto lCallback4 = [config](const layer& l) {
+    auto lCallback4 = [config](const layer &l) {
         if (!config.json) importBar.tick();
     };
 
@@ -142,7 +144,7 @@ int main(int argc, char *argv[]) {
     } else {
         std::cout << "[" << std::flush;
         for (int i = 0; i < layers.size(); i++) {
-            const layer& l = layers[i];
+            const layer &l = layers[i];
             std::cout << "{" << std::flush;
             std::cout << R"("driver":")" + l.driverName + "\"," << std::flush;
             std::cout << R"("featureCount":)" + std::to_string(l.featureCount) + "," << std::flush;
