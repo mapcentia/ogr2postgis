@@ -30,6 +30,7 @@ namespace ogr2postgis {
         bool append{false};
         bool json;
         bool autodetect;
+        std::string extension;
     };
 
     /**
@@ -221,20 +222,18 @@ namespace ogr2postgis {
                 count++;
                 if (count == maxFeatures || count == featureCount) {
                     break;
-                } else {
-                    if (!tmpType.empty() &&
-                        (tmpType != typeDeteced && tmpType != "multi" + typeDeteced &&
-                         tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
-                        typeDeteced = "geometry";
-                        break;
-                    }
-                    if (!tmpType.empty() &&
-                        (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
-                        singleMultiMixed = true;
-                    }
-                    tmpType = typeDeteced;
-                    continue;
                 }
+                if (!tmpType.empty() &&
+                    (tmpType != typeDeteced && tmpType != "multi" + typeDeteced &&
+                     tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
+                    typeDeteced = "geometry";
+                    break;
+                }
+                if (!tmpType.empty() &&
+                    (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
+                    singleMultiMixed = true;
+                }
+                tmpType = typeDeteced;
             }
             if (singleMultiMixed || typeFromLayer.empty()) {
                 type = typeDeteced;
@@ -266,8 +265,8 @@ namespace ogr2postgis {
      * @param callback4
      * @return
      */
-    inline std::vector<struct layer> start(
-        const config &config,
+    inline std::vector<layer> start(
+        config &config,
         const std::string &path,
         const std::function<void ((std::vector<std::string> fileNames))> &callback1,
         const std::function<void ((layer l))> &callback2,
@@ -291,6 +290,10 @@ namespace ogr2postgis {
                     std::string fileExtension = p.path().extension().string();
                     if (caseInsCompare(fileExtension, extensions)) {
                         fileNames.push_back(file);
+
+                        std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+                        config.extension = fileExtension;
                     }
                 }
             } catch (const std::exception &e) {
@@ -299,6 +302,8 @@ namespace ogr2postgis {
                     exit(1);
                 };
                 fileNames.push_back(path);
+                const std::filesystem::path p = std::filesystem::path(path);
+                config.extension = p.extension();
             }
         }
         callback1(fileNames);
@@ -363,35 +368,43 @@ namespace ogr2postgis {
             argv = CSLAddString(argv, "-append");
         }
         argv = CSLAddString(argv, "-overwrite");
-        //argv = CSLAddString(argv, "-skipfailures");
-        argv = CSLAddString(argv, "-lco");
-        argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
+        // argv = CSLAddString(argv, "-skipfailures");
         argv = CSLAddString(argv, "-lco");
         argv = CSLAddString(argv, "FID=gid");
-        argv = CSLAddString(argv, "-lco");
-        argv = CSLAddString(argv, "PRECISION=NO");
-        //argv = CSLAddString(argv, "-nlt");
-        //argv = CSLAddString(argv, l.type.c_str());
-        argv = CSLAddString(argv, "-s_srs"); // source projection
-        argv = CSLAddString(argv, targetSrs);
-        argv = CSLAddString(argv, "-t_srs");
-        argv = CSLAddString(argv,
-                            strcmp(l.authStr.c_str(), "-") != 0
-                                ? l.authStr.c_str()
-                                : !config.t_srs.empty()
-                                      ? config.t_srs.c_str()
-                                      : "EPSG:4326");
+
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
+
+        // Geom related flags
+        if (!l.type.empty()) {
+            argv = CSLAddString(argv, "-nlt");
+            argv = CSLAddString(argv, l.type.c_str());
+            argv = CSLAddString(argv, "-lco");
+            argv = CSLAddString(argv, "PRECISION=NO");
+            argv = CSLAddString(argv, "-lco");
+            argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
+            argv = CSLAddString(argv, "-s_srs"); // source projection
+            argv = CSLAddString(argv, targetSrs);
+            argv = CSLAddString(argv, "-t_srs");
+            argv = CSLAddString(argv,
+                                strcmp(l.authStr.c_str(), "-") != 0
+                                    ? l.authStr.c_str()
+                                    : !config.t_srs.empty()
+                                          ? config.t_srs.c_str()
+                                          : "EPSG:4326");
+        }
+
         argv = CSLAddString(argv, l.layerName.c_str());
+
 
         GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
                                        GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
 
         char **papszOptions = nullptr;
-        papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", config.autodetect ? "YES" : "NO");
-
+        if (config.extension == ".csv") {
+            papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", config.autodetect ? "YES" : "NO");
+        }
 
         GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
 
