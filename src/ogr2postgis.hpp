@@ -388,7 +388,7 @@ namespace ogr2postgis {
                                        nullptr, nullptr, nullptr);
 
         char **papszOptions = nullptr;
-        papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", "YES");
+       // papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", "YES");
 
         GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
 
