@@ -1,6 +1,6 @@
 /*
  * @author     Martin Høgh <mh@mapcentia.com>
- * @copyright  2013-2023 MapCentia ApS
+ * @copyright  2013-2024 MapCentia ApS
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
 
@@ -21,7 +21,7 @@ ProgressBar readBar{
     option::BarWidth{50},
     option::ForegroundColor{indicators::Color::white},
     option::FontStyles{
-        std::vector<indicators::FontStyle>{indicators::FontStyle::bold}
+        std::vector{indicators::FontStyle::bold}
     },
     option::PostfixText{"Analyzing files"},
 };
@@ -92,29 +92,29 @@ int main(int argc, char *argv[]) {
 
     auto path = program.get("path");
 
-    auto lCallback1 = [config](std::vector<std::string> fileNames) {
+    auto lCallback1 = [config](const std::vector<std::string>& fileNames) {
         if (!config.json) readBar.set_option(indicators::option::MaxProgress{fileNames.size()});
     };
 
-    auto lCallback2 = [config](layer l) {
+    auto lCallback2 = [config](const layer& l) {
         if (!config.json) readBar.tick();
     };
 
-    auto lCallback3 = [config](std::vector<struct layer> layers) {
+    auto lCallback3 = [config](const std::vector<struct layer>& layers) {
         if (!config.json) importBar.set_option(indicators::option::MaxProgress{layers.size()});
     };
 
-    auto lCallback4 = [config](layer l) {
+    auto lCallback4 = [config](const layer& l) {
         if (!config.json) importBar.tick();
     };
 
-    std::vector<struct layer> layers = start(config, path, lCallback1, lCallback2, lCallback3, lCallback4);
+    std::vector<layer> layers = start(config, path, lCallback1, lCallback2, lCallback3, lCallback4);
 
     // Print out
     if (!config.json) {
         Table table;
         auto startTime = std::chrono::high_resolution_clock::now();
-        int i{0};
+        int i;
         table.add_row({"Driver", "Count", "Type", "Layer no.", "Name", "Proj", "Auth", "File", "Error"});
         table[0].format()
                 .font_align(FontAlign::center)
@@ -140,17 +140,17 @@ int main(int argc, char *argv[]) {
     } else {
         std::cout << "[" << std::flush;
         for (int i = 0; i < layers.size(); i++) {
-            layer l = layers[i];
+            const layer& l = layers[i];
             std::cout << "{" << std::flush;
-            std::cout << "\"driver\":\"" + l.driverName + "\"," << std::flush;
-            std::cout << "\"featureCount\":" + std::to_string(l.featureCount) + "," << std::flush;
-            std::cout << "\"type\":\"" + l.type + (l.singleMultiMixed ? "(m)" : "") + "\"," << std::flush;
-            std::cout << "\"layerIndex\":" + std::to_string(l.layerIndex) + "," << std::flush;
-            std::cout << "\"layerName\":\"" + l.layerName + "\"," << std::flush;
-            std::cout << "\"hasWkt\":\"" + l.hasWkt + "\"," << std::flush;
-            std::cout << "\"authStr\":\"" + l.authStr + "\"," << std::flush;
-            std::cout << "\"file\":\"" + l.file + "\"," << std::flush;
-            std::cout << "\"error\":" + (l.error != "" ? "\"" + l.error + "\"" : "null") + "" << std::flush;
+            std::cout << R"("driver":")" + l.driverName + "\"," << std::flush;
+            std::cout << R"("featureCount":)" + std::to_string(l.featureCount) + "," << std::flush;
+            std::cout << R"("type":")" + l.type + (l.singleMultiMixed ? "(m)" : "") + "\"," << std::flush;
+            std::cout << R"("layerIndex":)" + std::to_string(l.layerIndex) + "," << std::flush;
+            std::cout << R"("layerName":")" + l.layerName + "\"," << std::flush;
+            std::cout << R"("hasWkt":")" + l.hasWkt + "\"," << std::flush;
+            std::cout << R"("authStr":")" + l.authStr + "\"," << std::flush;
+            std::cout << R"("file":")" + l.file + "\"," << std::flush;
+            std::cout << R"("error":)" + (!l.error.empty() ? "\"" + l.error + "\"" : "null") + "" << std::flush;
             std::cout << "}" << std::flush;
             if (i < layers.size() - 1) {
                 std::cout << "," << std::flush;

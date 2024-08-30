@@ -1,8 +1,9 @@
 /*
  * @author     Martin Høgh <mh@mapcentia.com>
- * @copyright  2013-2023 MapCentia ApS
+ * @copyright  2013-2024 MapCentia ApS
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
+#pragma once
 
 #include <list>
 #include <filesystem>
@@ -14,8 +15,8 @@
 
 
 namespace ogr2postgis {
-    std::mutex mtx;
-    BS::thread_pool pool;
+    inline std::mutex mtx;
+    inline BS::thread_pool pool;
 
     struct config {
         std::string connection;
@@ -44,7 +45,7 @@ namespace ogr2postgis {
      * @param s2
      * @return
      */
-    bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
+    inline bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
         for (std::string text: s2) {
             if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
                 return true;
@@ -67,7 +68,7 @@ namespace ogr2postgis {
      * @param t
      * @return
      */
-    std::string getGeomType(int t) {
+    inline std::string getGeomType(int t) {
         std::string type;
         switch (t) {
             case 1:
@@ -87,11 +88,12 @@ namespace ogr2postgis {
                 break;
             case 6:
                 type = "multipolygon";
+            default: ;
         }
         return type;
     }
 
-    const int maxFeatures{1000};
+    constexpr int maxFeatures{1000};
 
     struct layer {
         std::string driverName;
@@ -107,7 +109,7 @@ namespace ogr2postgis {
         bool singleMultiMixed;
     };
 
-    std::vector<struct layer> layers;
+    inline std::vector<layer> layers;
 
     struct ctx {
         int layerIndex{};
@@ -116,6 +118,7 @@ namespace ogr2postgis {
 
     /**
      *
+     * @param config
      * @param l
      * @param encoding
      * @param index
@@ -123,8 +126,8 @@ namespace ogr2postgis {
      * @param callback
      */
     void
-    translate(config config, layer l, const std::string &encoding, int index, bool first,
-              std::function<void ((layer l))> callback);
+    translate(const config &config, layer l, const std::string &encoding, int index, bool first,
+              const std::function<void ((layer l))> &callback);
 
     /**
      *
@@ -134,7 +137,8 @@ namespace ogr2postgis {
      */
     static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
         std::string str(msg);
-        ctx *myctx = (ctx *) CPLGetErrorHandlerUserData();
+        std::erase(str, '\n');
+        ctx *myctx = static_cast<ctx *>(CPLGetErrorHandlerUserData());
         layers[myctx->layerIndex].error = str;
         myctx->error = true;
     }
@@ -147,7 +151,7 @@ namespace ogr2postgis {
      */
     static void openErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
         std::string str(msg);
-        auto *l = (layer *) CPLGetErrorHandlerUserData();
+        auto *l = static_cast<layer *>(CPLGetErrorHandlerUserData());
         l->error = str;
     }
 
@@ -156,13 +160,13 @@ namespace ogr2postgis {
      * @param file
      * @param callback
      */
-    inline void openSource(std::string file, std::function<void ((layer l))> callback) {
+    inline void openSource(const std::string &file, const std::function<void ((layer l))> &callback) {
         layer l = {
             "", 0, "", "", "", file, "",
             "", 0, "", false
         };
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
-        auto *poDS = (GDALDataset *) GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+        auto *poDS = static_cast<GDALDataset *>(GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
         if (!l.error.empty() || poDS == nullptr) {
             l.error = !l.error.empty() ? l.error : "Unable to open file";
             std::lock_guard<std::mutex> lock(mtx);
@@ -237,7 +241,6 @@ namespace ogr2postgis {
                 type = typeFromLayer;
             }
 
-
             l = {
                 driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
                 wktString == nullptr ? "" : std::string(wktString),
@@ -254,6 +257,7 @@ namespace ogr2postgis {
 
     /**
      *
+     * @param config
      * @param path
      * @param callback1
      * @param callback2
@@ -261,19 +265,17 @@ namespace ogr2postgis {
      * @param callback4
      * @return
      */
-    std::vector<struct layer> start(
-        config config,
-        std::string path,
-        std::function<void ((std::vector<std::string> fileNames))> callback1,
-        std::function<void ((layer l))> callback2,
-        std::function<void ((std::vector<struct layer> layers))> callback3,
-        std::function<void ((layer l))> callback4
+    inline std::vector<struct layer> start(
+        const config &config,
+        const std::string &path,
+        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
+        const std::function<void ((layer l))> &callback2,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
         std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv"}};
         std::vector<std::string> fileNames;
-        std::string file;
-        std::string fileExtension;
         if (path.find(".gdb") != std::string::npos) {
             fileNames.push_back(path);
         } else {
@@ -284,8 +286,8 @@ namespace ogr2postgis {
                             "ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
                         exit(1);
                     }
-                    file = p.path().string();
-                    fileExtension = p.path().extension().string();
+                    std::string file = p.path().string();
+                    std::string fileExtension = p.path().extension().string();
                     if (caseInsCompare(fileExtension, extensions)) {
                         fileNames.push_back(file);
                     }
@@ -307,7 +309,7 @@ namespace ogr2postgis {
         // Import in PostGIS
         if (config.import) {
             callback3(layers);
-            for (const struct layer &l: layers) {
+            for (const layer &l: layers) {
                 if (l.error.empty()) {
                     pool.push_task(translate, config, l, "UTF8", i, true, callback4);
                 } else {
@@ -321,8 +323,8 @@ namespace ogr2postgis {
     }
 
     inline void
-    translate(config config, layer l, const std::string &encoding, int index, bool first,
-              std::function<void ((layer l))> callback) {
+    translate(const config &config, layer l, const std::string &encoding, const int index, const bool first,
+              const std::function<void ((layer l))> &callback) {
         char **argv{nullptr};
         std::string altName = l.layerName;
         std::string env = "PGCLIENTENCODING=" + encoding;
@@ -331,7 +333,7 @@ namespace ogr2postgis {
             .error = false,
         };
         CPLPushErrorHandlerEx(&pgErrorHandler, &myctx);
-        putenv((char *) env.c_str());
+        putenv(const_cast<char *>(env.c_str()));
         setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
         if (!config.nln.empty()) {
             altName = config.nln;
@@ -344,9 +346,9 @@ namespace ogr2postgis {
             (l.singleMultiMixed || config.p_multi)) {
             l.type = "multi" + l.type;
         }
-        const char *targetSrs = reinterpret_cast<const char *>(l.wktString != ""
-                                                                   ? l.wktString.c_str()
-                                                                   : config.s_srs.c_str());
+        const char *targetSrs = !l.wktString.empty()
+                                    ? l.wktString.c_str()
+                                    : config.s_srs.c_str();
         if (targetSrs == nullptr) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
@@ -360,35 +362,39 @@ namespace ogr2postgis {
             argv = CSLAddString(argv, "-append");
         }
         argv = CSLAddString(argv, "-overwrite");
-        argv = CSLAddString(argv, "-skipfailures");
+        //argv = CSLAddString(argv, "-skipfailures");
         argv = CSLAddString(argv, "-lco");
         argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         argv = CSLAddString(argv, "-lco");
         argv = CSLAddString(argv, "FID=gid");
         argv = CSLAddString(argv, "-lco");
         argv = CSLAddString(argv, "PRECISION=NO");
-        argv = CSLAddString(argv, "-nlt");
-        argv = CSLAddString(argv, l.type.c_str());
+        //argv = CSLAddString(argv, "-nlt");
+        //argv = CSLAddString(argv, l.type.c_str());
         argv = CSLAddString(argv, "-s_srs"); // source projection
         argv = CSLAddString(argv, targetSrs);
         argv = CSLAddString(argv, "-t_srs");
         argv = CSLAddString(argv,
-                            reinterpret_cast<const char *>(strcmp(l.authStr.c_str(), "-") != 0
-                                                               ? l.authStr.c_str()
-                                                               : !config.t_srs.empty()
-                                                                     ? config.t_srs.c_str()
-                                                                     : "EPSG:4326")); // Convert to this
+                            strcmp(l.authStr.c_str(), "-") != 0
+                                ? l.authStr.c_str()
+                                : !config.t_srs.empty()
+                                      ? config.t_srs.c_str()
+                                      : "EPSG:4326");
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
         argv = CSLAddString(argv, l.layerName.c_str());
 
-        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR,
+        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(), GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
-        GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr);
+
+        char **papszOptions = nullptr;
+        papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", "YES");
+
+        GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
 
         int bUsageError{FALSE};
         GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
-        auto *dst = (GDALDataset *) GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError);
+        auto *dst = static_cast<GDALDataset *>(GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError));
         GDALVectorTranslateOptionsFree(opt);
         GDALClose(dst);
         CSLDestroy(argv);
