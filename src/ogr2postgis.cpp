@@ -151,7 +151,8 @@ int main(int argc, char *argv[]) {
             std::cout << R"("type":")" + l.type + (l.singleMultiMixed ? "(m)" : "") + "\"," << std::flush;
             std::cout << R"("layerIndex":)" + std::to_string(l.layerIndex) + "," << std::flush;
             std::cout << R"("layerName":")" + l.layerName + "\"," << std::flush;
-            std::cout << R"("hasWkt":")" + l.hasWkt + "\"," << std::flush;
+            std::cout << R"("hasWkt":)" + static_cast<std::string>(l.hasWkt == "True" ? "true" : "false") + "," <<
+                    std::flush;
             std::cout << R"("authStr":")" + l.authStr + "\"," << std::flush;
             std::cout << R"("file":")" + l.file + "\"," << std::flush;
             std::cout << R"("error":)" + (!l.error.empty() ? "\"" + l.error + "\"" : "null") + "" << std::flush;
