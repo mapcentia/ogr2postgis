@@ -78,12 +78,8 @@ int main(int argc, char *argv[]) {
     if (program.present("--connection")) {
         config.connection = program.get("c");
     }
-    if (program.present("--s_srs")) {
-        config.s_srs = program.get("s");
-    }
-    if (program.present("--nln")) {
-        config.nln = program.get("n");
-    }
+    config.s_srs = program.present("--s_srs") ? program.get("s") : "";
+    config.nln = program.present("--nln") ? program.get("n") : "";
     // With defaults
     config.schema = program.get<std::string>("--schema");
     config.fallbackEncoding = program.get<std::string>("--encoding");

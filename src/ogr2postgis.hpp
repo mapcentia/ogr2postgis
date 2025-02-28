@@ -160,15 +160,25 @@ namespace ogr2postgis {
     /**
      *
      * @param file
+     * @param extension
      * @param callback
      */
-    inline void openSource(const std::string &file, const std::function<void ((layer l))> &callback) {
+    inline void openSource(std::string &file, const std::string &extension,
+                           const std::function<void ((layer l))> &callback) {
         layer l = {
             "", 0, "", "", "", file, "",
             "", 0, "", false
         };
         CPLPushErrorHandlerEx(&openErrorHandler, &l);
-        auto *poDS = static_cast<GDALDataset *>(GDALOpenEx(file.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
+
+        // If txt file, we think it's a CSV
+        std::string f;
+        if (extension == ".txt") {
+            f = "CSV:" + file;
+        } else {
+            f = file;
+        }
+        auto *poDS = static_cast<GDALDataset *>(GDALOpenEx(f.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
         if (!l.error.empty() || poDS == nullptr) {
             l.error = !l.error.empty() ? l.error : "Unable to open file";
             std::lock_guard<std::mutex> lock(mtx);
@@ -274,7 +284,9 @@ namespace ogr2postgis {
         const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
-        std::vector<std::string> extensions{{".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv"}};
+        std::vector<std::string> extensions{
+            {".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv", ".txt"}
+        };
         std::vector<std::string> fileNames;
         if (path.find(".gdb") != std::string::npos) {
             fileNames.push_back(path);
@@ -308,7 +320,7 @@ namespace ogr2postgis {
         }
         callback1(fileNames);
         for (const std::string &fileName: fileNames) {
-            pool.push_task(openSource, fileName, callback2);
+            pool.push_task(openSource, fileName, config.extension, callback2);
         }
         pool.wait_for_tasks();
         int i{0};
@@ -348,18 +360,23 @@ namespace ogr2postgis {
             }
         }
         altName = config.schema + "." + altName;
+
         if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") &&
             (l.singleMultiMixed || config.p_multi)) {
             l.type = "multi" + l.type;
-        }
-        const char *targetSrs = !l.wktString.empty()
+            }
+        const char *sourceSrs = !l.wktString.empty()
                                     ? l.wktString.c_str()
                                     : config.s_srs.c_str();
-        if (targetSrs == nullptr) {
+
+        // Stop if no source id. Except for CSV, which we default to EPSG:4326
+        if (*sourceSrs == 0 && (config.extension != ".csv" && config.extension != ".txt")) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
             callback(l);
             return;
+        } else {
+            sourceSrs = "EPSG:4326";
         }
         argv = CSLAddString(argv, "-f");
         argv = CSLAddString(argv, "PostgreSQL");
@@ -379,34 +396,42 @@ namespace ogr2postgis {
         if (!l.type.empty()) {
             argv = CSLAddString(argv, "-nlt");
             argv = CSLAddString(argv, l.type.c_str());
-            argv = CSLAddString(argv, "-lco");
-            argv = CSLAddString(argv, "PRECISION=NO");
-            argv = CSLAddString(argv, "-lco");
-            argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
-            argv = CSLAddString(argv, "-s_srs"); // source projection
-            argv = CSLAddString(argv, targetSrs);
-            argv = CSLAddString(argv, "-t_srs");
-            argv = CSLAddString(argv,
-                                strcmp(l.authStr.c_str(), "-") != 0
-                                    ? l.authStr.c_str()
-                                    : !config.t_srs.empty()
-                                          ? config.t_srs.c_str()
-                                          : "EPSG:4326");
         }
+        argv = CSLAddString(argv, "-lco");
+        argv = CSLAddString(argv, "PRECISION=NO");
+        argv = CSLAddString(argv, "-lco");
+        argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
+        argv = CSLAddString(argv, "-s_srs"); // source projection
+        argv = CSLAddString(argv, sourceSrs);
+        argv = CSLAddString(argv, "-t_srs");
+        argv = CSLAddString(argv,
+                            strcmp(l.authStr.c_str(), "-") != 0
+                                ? l.authStr.c_str()
+                                : !config.t_srs.empty()
+                                      ? config.t_srs.c_str()
+                                      : "EPSG:4326");
 
         argv = CSLAddString(argv, l.layerName.c_str());
-
-
         GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
                                        GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
 
         char **papszOptions = nullptr;
-        if (config.extension == ".csv") {
+        if (config.extension == ".csv" || config.extension == ".txt") {
             papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", config.autodetect ? "YES" : "NO");
+            papszOptions = CSLAddNameValue(papszOptions, "X_POSSIBLE_NAMES", "*lon*,Lon*,x,X");
+            papszOptions = CSLAddNameValue(papszOptions, "Y_POSSIBLE_NAMES", "*lat*,Lat*,y,Y");
         }
 
-        GDALDatasetH sourceDs = GDALOpenEx(l.file.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
+        // If txt file, we think it's a CSV
+        std::string f;
+        if (config.extension == ".txt") {
+            f = "CSV:" + l.file;
+        } else {
+            f = l.file;
+        }
+        GDALDatasetH sourceDs = GDALOpenEx(f.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
+        CSLDestroy(papszOptions);
 
         int bUsageError{FALSE};
         GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
