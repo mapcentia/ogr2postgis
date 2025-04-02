@@ -51,7 +51,9 @@ int main(int argc, char *argv[]) {
         false).implicit_value(true);
     program.add_argument("-p", "--p_multi").help("Promote single geometries to multi part.").default_value(
         false).implicit_value(true);
-    program.add_argument("-a", "--append").help("Append to existing layer instead of creating new.").default_value(
+    program.add_argument("-a", "--append").help("Append to existing table instead of creating new.").default_value(
+        false).implicit_value(true);
+   program.add_argument("-r", "--truncate").help("Truncate table before appending. Only have effect if --append is set.").default_value(
         false).implicit_value(true);
     program.add_argument("-j", "--json").help("Out JSON instead of ascii tables. Useful if output should be processed.")
             .default_value(
@@ -94,6 +96,7 @@ int main(int argc, char *argv[]) {
     config.t_srs = program.get<std::string>("--t_srs");
     config.import = program.get<bool>("--import");
     config.append = program.get<bool>("--append");
+    config.truncate = program.get<bool>("--truncate");
     config.p_multi = program.get<bool>("--p_multi");
     config.json = program.get<bool>("--json");
     config.autodetect = program.get<bool>("--autodetect");

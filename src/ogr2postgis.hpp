@@ -33,6 +33,7 @@ namespace ogr2postgis {
         bool import{false};
         bool p_multi{false};
         bool append{false};
+        bool truncate{false};
         bool json;
         bool autodetect;
         std::string extension;
@@ -415,24 +416,24 @@ namespace ogr2postgis {
         if (config.append) {
             argv = CSLAddString(argv, "-update");
             argv = CSLAddString(argv, "-append");
+        } else {
+            argv = CSLAddString(argv, "-overwrite");
+            // Layer creation options
+            argv = CSLAddString(argv, "-lco");
+            argv = CSLAddString(argv, "FID=gid");
+            argv = CSLAddString(argv, "-lco");
+            argv = CSLAddString(argv, "PRECISION=NO");
+            argv = CSLAddString(argv, "-lco");
+            argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         }
-        argv = CSLAddString(argv, "-overwrite");
         // argv = CSLAddString(argv, "-skipfailures");
-        argv = CSLAddString(argv, "-lco");
-        argv = CSLAddString(argv, "FID=gid");
-
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
-
         // Geom related flags
         if (!l.type.empty()) {
             argv = CSLAddString(argv, "-nlt");
             argv = CSLAddString(argv, l.type.c_str());
         }
-        argv = CSLAddString(argv, "-lco");
-        argv = CSLAddString(argv, "PRECISION=NO");
-        argv = CSLAddString(argv, "-lco");
-        argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         argv = CSLAddString(argv, "-s_srs"); // source projection
         argv = CSLAddString(argv, sourceSrs);
         argv = CSLAddString(argv, "-t_srs");
@@ -451,6 +452,11 @@ namespace ogr2postgis {
         } else {
             argv = CSLAddString(argv, l.layerName.c_str());
         }
+
+        if (config.truncate && config.append) {
+            CPLSetConfigOption("OGR_TRUNCATE", "YES");
+        }
+
         GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
                                        GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
