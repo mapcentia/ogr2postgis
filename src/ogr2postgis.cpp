@@ -60,6 +60,11 @@ int main(int argc, char *argv[]) {
             implicit_value(true);
     program.add_argument("-T", "--timestamp").help(
         "Name of timestamp fields. Create a timestamp field in the import table. Omit argument for no timestamp field");
+
+    program.add_argument("-x", "--x_possible_names").help(
+        "Specify the potential names of the columns that can contain X/longitude").default_value(std::string{"lon*,Lon*,x,X"});
+    program.add_argument("-y", "--y_possible_names").help(
+        "Specify the potential names of the columns that can contain Y/latitude").default_value(std::string{"lat*,Lat*,y,Y"});
     program.add_argument("-c", "--connection").help(
         "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
@@ -92,6 +97,8 @@ int main(int argc, char *argv[]) {
     config.p_multi = program.get<bool>("--p_multi");
     config.json = program.get<bool>("--json");
     config.autodetect = program.get<bool>("--autodetect");
+    config.x_possible_names = program.get<std::string>("--x_possible_names");
+    config.y_possible_names = program.get<std::string>("--y_possible_names");
 
     auto path = program.get("path");
 

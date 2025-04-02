@@ -37,6 +37,8 @@ namespace ogr2postgis {
         bool autodetect;
         std::string extension;
         std::string timestamp;
+        std::string x_possible_names;
+        std::string y_possible_names;
     };
 
 
@@ -456,8 +458,8 @@ namespace ogr2postgis {
         char **papszOptions = nullptr;
         if (config.extension == ".csv" || config.extension == ".txt") {
             papszOptions = CSLAddNameValue(papszOptions, "AUTODETECT_TYPE", config.autodetect ? "YES" : "NO");
-            papszOptions = CSLAddNameValue(papszOptions, "X_POSSIBLE_NAMES", "*lon*,Lon*,x,X");
-            papszOptions = CSLAddNameValue(papszOptions, "Y_POSSIBLE_NAMES", "*lat*,Lat*,y,Y");
+            papszOptions = CSLAddNameValue(papszOptions, "X_POSSIBLE_NAMES", config.x_possible_names.c_str());
+            papszOptions = CSLAddNameValue(papszOptions, "Y_POSSIBLE_NAMES", config.y_possible_names.c_str());
         }
 
         // If txt file, we think it's a CSV
