@@ -1,6 +1,6 @@
 /*
  * @author     Martin Høgh <mh@mapcentia.com>
- * @copyright  2013-2024 MapCentia ApS
+ * @copyright  2013-2025 MapCentia ApS
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
 
@@ -58,6 +58,8 @@ int main(int argc, char *argv[]) {
                 false).implicit_value(true);
     program.add_argument("-d", "--autodetect").help("Auto detect types in CSV files.").default_value(false).
             implicit_value(true);
+    program.add_argument("-T", "--timestamp").help(
+        "Name of timestamp fields. Create a timestamp field in the import table. Omit argument for no timestamp field");
     program.add_argument("-c", "--connection").help(
         "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
@@ -80,6 +82,7 @@ int main(int argc, char *argv[]) {
     }
     config.s_srs = program.present("--s_srs") ? program.get("s") : "";
     config.nln = program.present("--nln") ? program.get("n") : "";
+    config.timestamp = program.present("--timestamp") ? program.get("T") : "";
     // With defaults
     config.schema = program.get<std::string>("--schema");
     config.fallbackEncoding = program.get<std::string>("--encoding");

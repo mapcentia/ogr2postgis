@@ -1,6 +1,6 @@
 /*
  * @author     Martin Høgh <mh@mapcentia.com>
- * @copyright  2013-2024 MapCentia ApS
+ * @copyright  2013-2025 MapCentia ApS
  * @license    http://www.gnu.org/licenses/#AGPL  GNU AFFERO GENERAL PUBLIC LICENSE 3
  */
 #pragma once
@@ -9,6 +9,11 @@
 #include <filesystem>
 #include <iostream>
 #include <vector>
+#include <ctime>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include "gdal/ogrsf_frmts.h"
 #include "thread_pool.hpp"
 #include "gdal/gdal_utils.h"
@@ -31,7 +36,33 @@ namespace ogr2postgis {
         bool json;
         bool autodetect;
         std::string extension;
+        std::string timestamp;
     };
+
+
+    // Note: On POSIX systems, gmtime_r is thread-safe.
+    // On Windows, you might need to use gmtime_s.
+    inline std::string getCurrentTimestamp() {
+        using namespace std::chrono;
+        // Get current time_point and convert to time_t for seconds.
+        const auto now = system_clock::now();
+        auto now_time_t = system_clock::to_time_t(now);
+        // Extract microseconds from the current time.
+        auto micros = duration_cast<microseconds>(now.time_since_epoch()) % 1000000;
+        // Convert time_t to a tm structure in UTC.
+        std::tm utc_tm{};
+#if defined(_WIN32) || defined(_WIN64)
+        gmtime_s(&utc_tm, &now_time_t);  // Windows thread-safe version
+#else
+        gmtime_r(&now_time_t, &utc_tm); // POSIX thread-safe version
+#endif
+        // Build the string in the desired format.
+        std::ostringstream oss;
+        oss << std::put_time(&utc_tm, "%Y-%m-%d %H:%M:%S")
+                << '.' << std::setw(6) << std::setfill('0') << micros.count()
+                << "+00";
+        return oss.str();
+    }
 
     /**
      *
@@ -364,7 +395,7 @@ namespace ogr2postgis {
         if ((l.type == "point" || l.type == "linestring" || l.type == "polygon") &&
             (l.singleMultiMixed || config.p_multi)) {
             l.type = "multi" + l.type;
-            }
+        }
         const char *sourceSrs = !l.wktString.empty()
                                     ? l.wktString.c_str()
                                     : config.s_srs.c_str();
@@ -375,9 +406,8 @@ namespace ogr2postgis {
             CSLDestroy(argv);
             callback(l);
             return;
-        } else {
-            sourceSrs = "EPSG:4326";
         }
+        sourceSrs = "EPSG:4326";
         argv = CSLAddString(argv, "-f");
         argv = CSLAddString(argv, "PostgreSQL");
         if (config.append) {
@@ -410,8 +440,15 @@ namespace ogr2postgis {
                                 : !config.t_srs.empty()
                                       ? config.t_srs.c_str()
                                       : "EPSG:4326");
-
-        argv = CSLAddString(argv, l.layerName.c_str());
+        if (!config.timestamp.empty()) {
+            argv = CSLAddString(argv, "-sql");
+            std::string sql = "SELECT *, CAST('" + getCurrentTimestamp() +
+                              "' AS timestamp) AS " + config.timestamp + " FROM " +
+                              l.layerName;
+            argv = CSLAddString(argv, sql.c_str());
+        } else {
+            argv = CSLAddString(argv, l.layerName.c_str());
+        }
         GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
                                        GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
                                        nullptr, nullptr, nullptr);
