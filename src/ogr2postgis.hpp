@@ -411,6 +411,7 @@ namespace ogr2postgis {
             return;
         }
         sourceSrs = "EPSG:4326";
+        argv = CSLAddString(argv, "-nomd");
         argv = CSLAddString(argv, "-f");
         argv = CSLAddString(argv, "PostgreSQL");
         if (config.append) {
@@ -418,14 +419,14 @@ namespace ogr2postgis {
             argv = CSLAddString(argv, "-append");
         } else {
             argv = CSLAddString(argv, "-overwrite");
-            // Layer creation options
-            argv = CSLAddString(argv, "-lco");
-            argv = CSLAddString(argv, "FID=gid");
-            argv = CSLAddString(argv, "-lco");
-            argv = CSLAddString(argv, "PRECISION=NO");
-            argv = CSLAddString(argv, "-lco");
-            argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         }
+        // Layer creation options
+        argv = CSLAddString(argv, "-lco");
+        argv = CSLAddString(argv, "FID=gid");
+        argv = CSLAddString(argv, "-lco");
+        argv = CSLAddString(argv, "PRECISION=NO");
+        argv = CSLAddString(argv, "-lco");
+        argv = CSLAddString(argv, "GEOMETRY_NAME=the_geom");
         // argv = CSLAddString(argv, "-skipfailures");
         argv = CSLAddString(argv, "-nln");
         argv = CSLAddString(argv, altName.c_str());
