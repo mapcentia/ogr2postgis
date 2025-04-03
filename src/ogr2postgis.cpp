@@ -61,12 +61,11 @@ int main(int argc, char *argv[]) {
     program.add_argument("-d", "--autodetect").help("Auto detect types in CSV files.").default_value(false).
             implicit_value(true);
     program.add_argument("-T", "--timestamp").help(
-        "Name of timestamp fields. Create a timestamp field in the import table. Omit argument for no timestamp field");
-
+        "Name of timestamp field. Create a timestamp field in the import table. Omit argument for no timestamp field.");
     program.add_argument("-x", "--x_possible_names").help(
-        "Specify the potential names of the columns that can contain X/longitude").default_value(std::string{"lon*,Lon*,x,X"});
+        "Specify the potential names of the columns that can contain X/longitude. Only effects CSV.").default_value(std::string{"lon*,Lon*,x,X"});
     program.add_argument("-y", "--y_possible_names").help(
-        "Specify the potential names of the columns that can contain Y/latitude").default_value(std::string{"lat*,Lat*,y,Y"});
+        "Specify the potential names of the columns that can contain Y/latitude. Only effects CSV.").default_value(std::string{"lat*,Lat*,y,Y"});
     program.add_argument("-c", "--connection").help(
         "PGDATASOURCE postgres datasource. E.g.\"PG:host='addr' dbname='databasename' port='5432' user='x' password='y'\"");
     program.add_argument("path").help("[DIRECTORY|FILE]");
