@@ -318,7 +318,7 @@ namespace ogr2postgis {
         const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
-        std::vector<std::string> extensions{
+        const std::vector<std::string> extensions{
             {".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv", ".txt"}
         };
         std::vector<std::string> fileNames;
@@ -456,6 +456,7 @@ namespace ogr2postgis {
 
         if (config.truncate && config.append) {
             CPLSetConfigOption("OGR_TRUNCATE", "YES");
+            CPLSetConfigOption("PG_USE_COPY", "YES");
         }
 
         GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
