@@ -14,9 +14,10 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
-#include "gdal/ogrsf_frmts.h"
+#include "ogrsf_frmts.h"
 #include "thread_pool.hpp"
-#include "gdal/gdal_utils.h"
+#include "gdal_utils.h"
+#include <memory>
 
 
 namespace ogr2postgis {
@@ -60,6 +61,42 @@ namespace ogr2postgis {
         int layerIndex{};
         bool error{false};
     };
+
+
+    constexpr int OPEN_FLAGS = GDAL_OF_VECTOR; // Dataset open mode constant
+
+    // Define a smart pointer for GDALDataset with a custom deleter
+    using GDALDatasetPtr = std::unique_ptr<GDALDataset, decltype(&GDALClose)>;
+
+    // Function to open a dataset and return it as a managed smart pointer
+    inline GDALDatasetPtr OpenVectorDataset(const std::string &filename) {
+        return GDALDatasetPtr(
+            static_cast<GDALDataset *>(GDALOpenEx(
+                filename.c_str(), // File path
+                OPEN_FLAGS, // Dataset open mode
+                nullptr, // Driver list
+                nullptr, // Open-specific options
+                nullptr // Sibling files
+            )),
+            &GDALClose // Custom deleter ensures proper cleanup
+        );
+    }
+
+    inline GDALDatasetPtr VectorTranslateDataset(GDALDatasetH pgDs, GDALDatasetH *sourceDs,
+                                                 const GDALVectorTranslateOptions *opt, int *bUsageError) {
+        return GDALDatasetPtr(
+            static_cast<GDALDataset *>(GDALVectorTranslate(
+                nullptr,
+                pgDs,
+                1,
+                sourceDs,
+                opt,
+                bUsageError
+            )),
+            &GDALClose // Custom deleter ensures proper cleanup
+        );
+    }
+
 
     // Note: On POSIX systems, gmtime_r is thread-safe.
     // On Windows, you might need to use gmtime_s.
@@ -207,12 +244,14 @@ namespace ogr2postgis {
         } else {
             f = file;
         }
-        auto *poDS = static_cast<GDALDataset *>(GDALOpenEx(f.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
+        auto poDS = OpenVectorDataset(f);
+
         if (!l.error.empty() || poDS == nullptr) {
             l.error = !l.error.empty() ? l.error : "Unable to open file";
             std::lock_guard<std::mutex> lock(mtx);
             layers.push_back(l);
             callback(l);
+            CPLPopErrorHandler();
             return;
         }
         const OGRSpatialReference *projection;
@@ -251,29 +290,50 @@ namespace ogr2postgis {
             std::string typeFromLayer;
             std::string tmpType;
             bool singleMultiMixed{false};
-            OGRFeature *poFeature;
             typeFromLayer = getGeomType(layer->GetGeomType());
-            while ((poFeature = layer->GetNextFeature()) != nullptr) {
+
+            struct OGRFeatureDeleter {
+                void operator()(OGRFeature *feature) const {
+                    if (feature) {
+                        OGRFeature::DestroyFeature(feature);
+                    }
+                }
+            };
+            OGRFeature *raw;
+            while ((raw = layer->GetNextFeature()) != nullptr) {
+                // Retrieve the next feature and wrap it immediately.
+                std::unique_ptr<OGRFeature, OGRFeatureDeleter> poFeature(raw);
+                if (!poFeature) {
+                    CPLPopErrorHandler();
+                    break; // No more features available.
+                }
+
                 OGRGeometry *poGeometry = poFeature->GetGeometryRef();
                 if (poGeometry != nullptr) {
                     typeDeteced = getGeomType(wkbFlatten(poGeometry->getGeometryType()));
                 }
                 count++;
                 if (count == maxFeatures || count == featureCount) {
+                    // RAII ensures that 'poFeature' is cleaned up.
+                    CPLPopErrorHandler();
                     break;
                 }
                 if (!tmpType.empty() &&
                     (tmpType != typeDeteced && tmpType != "multi" + typeDeteced &&
                      tmpType != typeDeteced.substr(5, typeDeteced.length()))) {
                     typeDeteced = "geometry";
+                    CPLPopErrorHandler();
                     break;
                 }
                 if (!tmpType.empty() &&
-                    (tmpType == "multi" + typeDeteced || tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
+                    (tmpType == "multi" + typeDeteced ||
+                     tmpType == typeDeteced.substr(5, typeDeteced.length()))) {
                     singleMultiMixed = true;
                 }
                 tmpType = typeDeteced;
+                //poFeature.reset(raw);
             }
+
             if (singleMultiMixed || typeFromLayer.empty()) {
                 type = typeDeteced;
             } else {
@@ -284,14 +344,18 @@ namespace ogr2postgis {
                 driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
                 wktString == nullptr ? "" : std::string(wktString),
                 authStr, i, "", singleMultiMixed
-            }; {
+            };
+            if (wktString != nullptr) {
+                CPLFree(wktString);
+                wktString = nullptr;
+            }
+
                 std::lock_guard<std::mutex> lock(mtx);
                 layers.push_back(l);
                 callback(l);
-            }
-            OGRFeature::DestroyFeature(poFeature);
+
         }
-        GDALClose(poDS);
+        CPLPopErrorHandler();
     }
 
     /**
@@ -377,6 +441,8 @@ namespace ogr2postgis {
             };
             pool.wait_for_tasks();
         }
+        OGRCleanupAll();
+        GDALDestroyDriverManager();
         return layers;
     }
 
@@ -410,13 +476,14 @@ namespace ogr2postgis {
                                     : config.s_srs.c_str();
 
         // Stop if no source id. Except for CSV, which we default to EPSG:4326
-        if (*sourceSrs == 0 && (config.extension != ".csv" && config.extension != ".txt")) {
+        if (sourceSrs == nullptr) {
             layers[index].error = "Can't impoort without source srs";
             CSLDestroy(argv);
             callback(l);
+            CPLPopErrorHandler();
+
             return;
         }
-        sourceSrs = "EPSG:4326";
         argv = CSLAddString(argv, "-nomd");
         argv = CSLAddString(argv, "-f");
         argv = CSLAddString(argv, "PostgreSQL");
@@ -465,9 +532,6 @@ namespace ogr2postgis {
             CPLSetConfigOption("PG_USE_COPY", "YES");
         }
 
-        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
-                                       GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
-                                       nullptr, nullptr, nullptr);
 
         char **papszOptions = nullptr;
         if (config.extension == ".csv" || config.extension == ".txt") {
@@ -483,15 +547,45 @@ namespace ogr2postgis {
         } else {
             f = l.file;
         }
-        GDALDatasetH sourceDs = GDALOpenEx(f.c_str(), GDAL_OF_VECTOR, nullptr, papszOptions, nullptr);
-        CSLDestroy(papszOptions);
+        GDALDatasetH pgDs = GDALOpenEx(config.connection.c_str(),
+                                       GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+                                       nullptr, nullptr, nullptr);
+
+
+        GDALDatasetPtr pgDsPtr(
+            static_cast<GDALDataset *>(GDALOpenEx(config.connection.c_str(),
+                                                  GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+                                                  nullptr, nullptr, nullptr)), &GDALClose);
+
+        GDALDatasetPtr sourceDsPtr(
+            static_cast<GDALDataset *>(
+                GDALOpenEx(f.c_str(),
+                           GDAL_OF_VECTOR,
+                           nullptr, // drivers
+                           papszOptions,
+                           nullptr // sibling files
+                )
+            ),
+            &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
+        );
+
+
+        GDALDatasetH rawSourceDs = sourceDsPtr.get();
+        // GDALDatasetH rawPgDs = pgDsPtr.get();
+
 
         int bUsageError{FALSE};
         GDALVectorTranslateOptions *opt = GDALVectorTranslateOptionsNew(argv, nullptr);
-        auto *dst = static_cast<GDALDataset *>(GDALVectorTranslate(nullptr, pgDs, 1, &sourceDs, opt, &bUsageError));
-        GDALVectorTranslateOptionsFree(opt);
-        GDALClose(dst);
+
+        VectorTranslateDataset(pgDs, &rawSourceDs, opt, &bUsageError);
+
+        CSLDestroy(papszOptions);
         CSLDestroy(argv);
+        CPLPopErrorHandler();
+        GDALVectorTranslateOptionsFree(opt);
+        // GDALClose(pgDs);
+
+
         // If error we try with the fallback encoding
         if (myctx.error && first) {
             layers[index].error = "";
