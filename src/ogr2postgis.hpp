@@ -42,6 +42,24 @@ namespace ogr2postgis {
         std::string y_possible_names;
     };
 
+    struct layer {
+        std::string driverName;
+        GIntBig featureCount;
+        std::string type;
+        std::string layerName;
+        std::string hasWkt;
+        std::string file;
+        std::string wktString;
+        std::string authStr;
+        int layerIndex;
+        std::string error;
+        bool singleMultiMixed;
+    };
+
+    struct ctx {
+        int layerIndex{};
+        bool error{false};
+    };
 
     // Note: On POSIX systems, gmtime_r is thread-safe.
     // On Windows, you might need to use gmtime_s.
@@ -83,8 +101,9 @@ namespace ogr2postgis {
      */
     inline bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
         for (std::string text: s2) {
-            if ((s1.size() == text.size()) && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN))
+            if (s1.size() == text.size() && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN)) {
                 return true;
+            }
         }
         return false;
     }
@@ -95,15 +114,10 @@ namespace ogr2postgis {
      * @param b
      * @return
      */
-    bool caseInsCharCompareN(char a, char b) {
-        return (toupper(a) == toupper(b));
+    inline bool caseInsCharCompareN(char a, char b) {
+        return toupper(a) == toupper(b);
     }
 
-    /**
-     *
-     * @param t
-     * @return
-     */
     inline std::string getGeomType(int t) {
         std::string type;
         switch (t) {
@@ -131,26 +145,7 @@ namespace ogr2postgis {
 
     constexpr int maxFeatures{1000};
 
-    struct layer {
-        std::string driverName;
-        GIntBig featureCount;
-        std::string type;
-        std::string layerName;
-        std::string hasWkt;
-        std::string file;
-        std::string wktString;
-        std::string authStr;
-        int layerIndex;
-        std::string error;
-        bool singleMultiMixed;
-    };
-
     inline std::vector<layer> layers;
-
-    struct ctx {
-        int layerIndex{};
-        bool error{false};
-    };
 
     /**
      *
@@ -318,45 +313,56 @@ namespace ogr2postgis {
         const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
-        const std::vector<std::string> extensions{
-            {".tab", ".shp", ".gml", ".geojson", ".gpkg", ".gdb", ".fgb", ".csv", ".txt"}
-        };
-        std::vector<std::string> fileNames;
-        if (path.find(".gdb") != std::string::npos) {
-            fileNames.push_back(path);
-        } else {
-            try {
-                for (auto &p: std::filesystem::recursive_directory_iterator(path)) {
-                    if (!config.nln.empty() && config.import && !config.append) {
-                        printf(
-                            "ERROR: Can't use alternative table name for importing directories. All tables will be named alike.\n");
-                        exit(1);
-                    }
-                    std::string file = p.path().string();
-                    std::string fileExtension = p.path().extension().string();
-                    if (caseInsCompare(fileExtension, extensions)) {
-                        fileNames.push_back(file);
 
-                        std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(),
-                                       [](unsigned char c) { return std::tolower(c); });
-                        config.extension = fileExtension;
+        static const std::vector<std::string> extensions{
+            ".tab", ".shp", ".gml", ".geojson", ".gpkg",
+            ".gdb", ".fgb", ".csv", ".txt"
+        };
+
+        // 1) shared vector + mutex
+        std::vector<std::pair<std::string, std::string> > fileEntries;
+        std::mutex entriesMtx;
+
+        // 2) recursive scan function
+        std::function<void(const std::string &)> scanDirectory =
+                [&](const std::string &dirPath) {
+            for (auto &p: std::filesystem::directory_iterator(dirPath)) {
+                if (p.is_directory()) {
+                    // schedule a new scan task
+                    pool.push_task(scanDirectory, p.path().string());
+                } else {
+                    auto ext = p.path().extension().string();
+                    if (caseInsCompare(ext, extensions)) {
+                        // record file + its extension
+                        std::lock_guard lock(entriesMtx);
+                        fileEntries.emplace_back(p.path().string(), ext);
                     }
                 }
-            } catch (const std::exception &e) {
-                if (!std::filesystem::exists(path)) {
-                    printf("ERROR: Could not open directory or file.\n");
-                    exit(1);
-                };
-                fileNames.push_back(path);
-                const std::filesystem::path p = std::filesystem::path(path);
-                config.extension = p.extension();
             }
+        };
+
+        // 3) kick off the first scan (or just treat .gdb specially)
+        if (path.find(".gdb") != std::string::npos) {
+            fileEntries.emplace_back(path, "");
+        } else {
+            pool.push_task(scanDirectory, path);
+            pool.wait_for_tasks();
         }
-        callback1(fileNames);
-        for (const std::string &fileName: fileNames) {
-            pool.push_task(openSource, fileName, config.extension, callback2);
+
+        // tell caller what we found
+        std::vector<std::string> fileNamesOnly;
+        fileNamesOnly.reserve(fileEntries.size());
+        for (auto &fe: fileEntries) {
+            fileNamesOnly.push_back(fe.first);
+        }
+        callback1(fileNamesOnly);
+
+        // 4) now import each in parallel, passing along its own ext
+        for (auto &fe: fileEntries) {
+            pool.push_task(openSource, fe.first, fe.second, callback2);
         }
         pool.wait_for_tasks();
+
         int i{0};
         // Import in PostGIS
         if (config.import) {
