@@ -326,8 +326,8 @@ namespace ogr2postgis {
                 authStr, i, "", singleMultiMixed
             }; {
                 std::lock_guard<std::mutex> lock(open_mtx);
-                layers.emplace_back(std::move(l));
                 callback(l);
+                layers.emplace_back(std::move(l));
             }
             if (wktString != nullptr) {
                 CPLFree(wktString);
