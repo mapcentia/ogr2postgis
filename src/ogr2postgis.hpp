@@ -414,7 +414,8 @@ namespace ogr2postgis {
         int i{0};
         // Import in PostGIS
         if (config.import) {
-            GDALDatasetPtr pgDs(
+            setenv("PGCLIENTENCODING", "UTF8", 1);
+            GDALDatasetPtr pgDsUTF8(
                 static_cast<GDALDataset *>(
                     GDALOpenEx(config.connection.c_str(),
                                GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
@@ -425,13 +426,13 @@ namespace ogr2postgis {
             );
 
             // Safely operate on GDAL datasets
-            if (pgDs == nullptr) {
+            if (pgDsUTF8 == nullptr) {
                 throw std::runtime_error("Failed to open GDAL dataset");
             }
             callback3(layers);
             for (const layer &l: layers) {
                 if (l.error.empty()) {
-                    pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDs.get());
+                    pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDsUTF8.get());
                 } else {
                     callback4(l);
                 }
@@ -581,7 +582,22 @@ namespace ogr2postgis {
         // If error we try with the fallback encoding
         if (myctx.error && first) {
             layers[index].error = "";
-            translate(config, l, config.fallbackEncoding, index, false, callback, pgDs);
+
+            setenv("PGCLIENTENCODING", config.fallbackEncoding.c_str(), 1);
+            GDALDatasetPtr pgDsFallbackEncoding(
+                static_cast<GDALDataset *>(
+                    GDALOpenEx(config.connection.c_str(),
+                               GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+                               nullptr, nullptr, nullptr
+                    )
+                ),
+                &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
+            );
+            // Safely operate on GDAL datasets
+            if (pgDsFallbackEncoding == nullptr) {
+                throw std::runtime_error("Failed to open GDAL dataset");
+            }
+            translate(config, l, config.fallbackEncoding, index, false, callback, pgDsFallbackEncoding.get());
             return;
         }
         callback(l);
