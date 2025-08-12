@@ -176,8 +176,12 @@ namespace ogr2postgis {
         std::string str(msg);
         std::erase(str, '\n');
         ctx *myctx = static_cast<ctx *>(CPLGetErrorHandlerUserData());
-        layers[myctx->layerIndex].error = str;
-        myctx->error = true;
+        // Ignore error regarding Layer creation options when appending
+        const std::string prefix = "Layer creation options ignored";
+        if (!str.starts_with(prefix)) {
+            layers[myctx->layerIndex].error = str;
+            myctx->error = true;
+        }
     }
 
     /**
