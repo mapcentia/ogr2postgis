@@ -218,7 +218,7 @@ namespace ogr2postgis {
             f = file;
         }
 
-        std::mutex open_mtx;
+        static std::mutex open_mtx;
 
         GDALDatasetPtr poDS(
             static_cast<GDALDataset *>(GDALOpenEx(
@@ -342,9 +342,72 @@ namespace ogr2postgis {
     }
 
     /**
+     * Imports the global `layers` vector into PostgreSQL. The PG datasource is
+     * opened from config.connection; throws std::runtime_error if that fails.
      *
      * @param config
-     * @param path
+     * @param callback3
+     * @param callback4
+     */
+    inline void runImport(
+        const config &config,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        setenv("PGCLIENTENCODING", "UTF8", 1);
+        GDALDatasetPtr pgDsUTF8(
+            static_cast<GDALDataset *>(
+                GDALOpenEx(config.connection.c_str(),
+                           GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+                           nullptr, nullptr, nullptr
+                )
+            ),
+            &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
+        );
+
+        // Safely operate on GDAL datasets
+        if (pgDsUTF8 == nullptr) {
+            throw std::runtime_error("Failed to open GDAL dataset");
+        }
+        if (callback3) callback3(layers);
+        int i{0};
+        for (const layer &l: layers) {
+            if (l.error.empty()) {
+                pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDsUTF8.get());
+            } else if (callback4) {
+                callback4(l);
+            }
+            i++;
+        }
+        pool.wait_for_tasks();
+    }
+
+    /**
+     * Imports an explicit selection of previously analyzed layers into
+     * PostgreSQL. Returns the layers with any import errors filled in.
+     *
+     * @param config
+     * @param selection
+     * @param callback3
+     * @param callback4
+     * @return
+     */
+    inline std::vector<layer> importLayers(
+        const config &config,
+        std::vector<layer> selection,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        GDALAllRegister();
+        layers = std::move(selection);
+        runImport(config, callback3, callback4);
+        return layers;
+    }
+
+    /**
+     *
+     * @param config
+     * @param paths
      * @param callback1
      * @param callback2
      * @param callback3
@@ -353,13 +416,14 @@ namespace ogr2postgis {
      */
     inline std::vector<layer> start(
         config &config,
-        const std::string &path,
+        const std::vector<std::string> &paths,
         const std::function<void ((std::vector<std::string> fileNames))> &callback1,
         const std::function<void ((layer l))> &callback2,
         const std::function<void ((std::vector<layer> layers))> &callback3,
         const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
+        layers.clear();
 
         static const std::vector<std::string> extensions{
             ".tab", ".shp", ".gml", ".geojson", ".gpkg",
@@ -388,18 +452,20 @@ namespace ogr2postgis {
             }
         };
 
-        // 3) kick off the first scan (or just treat .gdb specially)
-        if (std::filesystem::is_regular_file(path)) {
-            // If it's a file, add to fileEntries
-            fileEntries.emplace_back(path, std::filesystem::path(path).extension().string());
-        } else if (path.find(".gdb") != std::string::npos) {
-            // Handle .gdb case
-            fileEntries.emplace_back(path, "");
-        } else {
-            // Otherwise, process the directory
-            pool.push_task(scanDirectory, path);
-            pool.wait_for_tasks();
+        // 3) kick off the scans (or just treat files/.gdb specially)
+        for (const std::string &path: paths) {
+            if (std::filesystem::is_regular_file(path)) {
+                // If it's a file, add to fileEntries
+                fileEntries.emplace_back(path, std::filesystem::path(path).extension().string());
+            } else if (path.find(".gdb") != std::string::npos) {
+                // Handle .gdb case
+                fileEntries.emplace_back(path, "");
+            } else {
+                // Otherwise, process the directory
+                pool.push_task(scanDirectory, path);
+            }
         }
+        pool.wait_for_tasks();
 
         // tell caller what we found
         std::vector<std::string> fileNamesOnly;
@@ -415,37 +481,33 @@ namespace ogr2postgis {
         }
         pool.wait_for_tasks();
 
-        int i{0};
         // Import in PostGIS
         if (config.import) {
-            setenv("PGCLIENTENCODING", "UTF8", 1);
-            GDALDatasetPtr pgDsUTF8(
-                static_cast<GDALDataset *>(
-                    GDALOpenEx(config.connection.c_str(),
-                               GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
-                               nullptr, nullptr, nullptr
-                    )
-                ),
-                &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
-            );
-
-            // Safely operate on GDAL datasets
-            if (pgDsUTF8 == nullptr) {
-                throw std::runtime_error("Failed to open GDAL dataset");
-            }
-            callback3(layers);
-            for (const layer &l: layers) {
-                if (l.error.empty()) {
-                    pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDsUTF8.get());
-                } else {
-                    callback4(l);
-                }
-                i++;
-            };
-            pool.wait_for_tasks();
+            runImport(config, callback3, callback4);
         }
         OGRCleanupAll();
         return layers;
+    }
+
+    /**
+     *
+     * @param config
+     * @param path
+     * @param callback1
+     * @param callback2
+     * @param callback3
+     * @param callback4
+     * @return
+     */
+    inline std::vector<layer> start(
+        config &config,
+        const std::string &path,
+        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
+        const std::function<void ((layer l))> &callback2,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        return start(config, std::vector<std::string>{path}, callback1, callback2, callback3, callback4);
     }
 
     inline void
