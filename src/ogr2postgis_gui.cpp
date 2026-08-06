@@ -446,11 +446,25 @@ private:
     wxButton *importButton;
     wxButton *selectAllButton;
     wxButton *selectNoneButton;
-    std::vector<layer> analyzedLayers; // one entry per list row, same order
+    struct Row {
+        layer l;
+        wxString status;
+        bool importable; // analysis succeeded; import errors don't clear this
+    };
+
+    std::vector<Row> rowData; // indexed by list item data
     int totalFiles = 0;
     std::mutex mtx; // protects processedCount (written from pool threads)
     size_t processedCount = 0;
     bool busy = false;
+    int sortColumn = -1;
+    bool sortAscending = true;
+
+    struct SortContext {
+        const std::vector<Row> *rows;
+        int column;
+        bool ascending;
+    } sortContext{};
 
     void OnExit(wxCommandEvent &event);
 
@@ -470,9 +484,35 @@ private:
 
     void OnProgressUpdate(wxThreadEvent &event);
 
+    void OnColumnClick(wxListEvent &event);
+
+    static int wxCALLBACK CompareRows(wxIntPtr item1, wxIntPtr item2, wxIntPtr sortData);
+
+    // The layer a row represents, independent of the current sort order
+    [[nodiscard]] size_t layerIndexAt(long row) const {
+        return static_cast<size_t>(listCtrl->GetItemData(row));
+    }
+
+    void setRowStatus(long row, const wxString &text) {
+        listCtrl->SetItem(row, COL_STATUS, text);
+        rowData[layerIndexAt(row)].status = text;
+    }
+
+    // Let the File column absorb the width not used by the other columns
+    void adjustFileColumn() {
+        int fixed = 0;
+        for (int col = 0; col < listCtrl->GetColumnCount(); col++) {
+            if (col != COL_FILE) {
+                fixed += listCtrl->GetColumnWidth(col);
+            }
+        }
+        const int fileWidth = listCtrl->GetClientSize().GetWidth() - fixed;
+        listCtrl->SetColumnWidth(COL_FILE, fileWidth > 250 ? fileWidth : 250);
+    }
+
     void checkAll(bool check) {
         for (long row = 0; row < listCtrl->GetItemCount(); row++) {
-            listCtrl->CheckItem(row, check && analyzedLayers[row].error.empty());
+            listCtrl->CheckItem(row, check && rowData[layerIndexAt(row)].importable);
         }
     }
 
@@ -572,6 +612,73 @@ Frame::Frame()
     Bind(wxEVT_BUTTON, &Frame::OnSelectNone, this, ID_SelectNone);
     Bind(UPDATE_LIST_TYPE, &Frame::OnOpen, this, wxID_ANY);
     Bind(PROGRESS_UPDATE_EVENT, &Frame::OnProgressUpdate, this, wxID_ANY);
+    listCtrl->Bind(wxEVT_LIST_COL_CLICK, &Frame::OnColumnClick, this);
+    listCtrl->Bind(wxEVT_SIZE, [this](wxSizeEvent &event) {
+        event.Skip();
+        CallAfter([this]() { adjustFileColumn(); });
+    });
+}
+
+void Frame::OnColumnClick(wxListEvent &event) {
+    if (busy) {
+        return;
+    }
+    const int col = event.GetColumn();
+    if (col < 0) {
+        return;
+    }
+    sortAscending = col == sortColumn ? !sortAscending : true;
+    sortColumn = col;
+    sortContext = {&rowData, sortColumn, sortAscending};
+    listCtrl->SortItems(&Frame::CompareRows, reinterpret_cast<wxIntPtr>(&sortContext));
+    listCtrl->ShowSortIndicator(sortColumn, sortAscending);
+}
+
+int wxCALLBACK Frame::CompareRows(wxIntPtr item1, wxIntPtr item2, wxIntPtr sortData) {
+    const auto &ctx = *reinterpret_cast<const SortContext *>(sortData);
+    const layer &a = (*ctx.rows)[item1].l;
+    const layer &b = (*ctx.rows)[item2].l;
+    int result;
+    switch (ctx.column) {
+        case COL_COUNT:
+            result = a.featureCount < b.featureCount ? -1 : a.featureCount > b.featureCount ? 1 : 0;
+            break;
+        case COL_TYPE:
+            result = wxString(a.type).CmpNoCase(b.type);
+            break;
+        case COL_LAYER_NO:
+            result = a.layerIndex - b.layerIndex;
+            break;
+        case COL_NAME:
+            result = wxString(a.layerName).CmpNoCase(b.layerName);
+            break;
+        case COL_PROJ:
+            result = wxString(a.hasWkt).CmpNoCase(b.hasWkt);
+            break;
+        case COL_AUTH:
+            result = wxString(a.authStr).CmpNoCase(b.authStr);
+            break;
+        case COL_FILE:
+            result = wxString(a.file).CmpNoCase(b.file);
+            break;
+        case COL_ERROR:
+            result = wxString(a.error).CmpNoCase(b.error);
+            break;
+        case COL_STATUS:
+            result = (*ctx.rows)[item1].status.CmpNoCase((*ctx.rows)[item2].status);
+            break;
+        default:
+            result = wxString(a.driverName).CmpNoCase(b.driverName);
+            break;
+    }
+    if (result == 0) {
+        // Stable tie-break so equal values keep a deterministic order
+        result = wxString(a.file).CmpNoCase(b.file);
+        if (result == 0) {
+            result = a.layerIndex - b.layerIndex;
+        }
+    }
+    return ctx.ascending ? result : -result;
 }
 
 void Frame::OnProgressUpdate(wxThreadEvent &event) {
@@ -594,7 +701,8 @@ void Frame::OnOpen(const UpdateListEvent &event) {
     listCtrl->SetItem(index, COL_AUTH, l.authStr);
     listCtrl->SetItem(index, COL_FILE, l.file);
     listCtrl->SetItem(index, COL_ERROR, l.error);
-    analyzedLayers.push_back(l);
+    rowData.push_back({l, wxString(), l.error.empty()});
+    listCtrl->SetItemData(index, static_cast<long>(rowData.size() - 1));
     if (l.error.empty()) {
         listCtrl->CheckItem(index, true);
     } else {
@@ -638,7 +746,9 @@ void Frame::OnSettings(wxCommandEvent &) {
 
 void Frame::startAnalysis(std::vector<std::string> paths) {
     listCtrl->DeleteAllItems();
-    analyzedLayers.clear();
+    rowData.clear();
+    sortColumn = -1;
+    listCtrl->RemoveSortIndicator();
     resetProgress(0);
     setBusy(true);
     SetStatusText("Analyzing files...");
@@ -669,7 +779,7 @@ void Frame::startAnalysis(std::vector<std::string> paths) {
         }
         CallAfter([this, errorMsg]() {
             setBusy(false);
-            SetStatusText(wxString::Format("%zu layer(s) found", analyzedLayers.size()));
+            SetStatusText(wxString::Format("%zu layer(s) found", rowData.size()));
             if (!errorMsg.empty()) {
                 wxMessageBox("Analysis failed:\n" + errorMsg, "Error", wxOK | wxICON_ERROR, this);
             }
@@ -684,9 +794,12 @@ void Frame::OnImportSelected(wxCommandEvent &) {
     std::vector<long> rows;
     std::vector<layer> selection;
     for (long row = 0; row < listCtrl->GetItemCount(); row++) {
-        if (listCtrl->IsItemChecked(row) && analyzedLayers[row].error.empty()) {
+        const Row &r = rowData[layerIndexAt(row)];
+        if (listCtrl->IsItemChecked(row) && r.importable) {
             rows.push_back(row);
-            selection.push_back(analyzedLayers[row]);
+            layer l = r.l;
+            l.error.clear(); // a previous failed import must not block a retry
+            selection.push_back(std::move(l));
         }
     }
     if (selection.empty()) {
@@ -719,7 +832,7 @@ void Frame::OnImportSelected(wxCommandEvent &) {
 
 void Frame::runImport(config cfg, std::vector<layer> selection, std::vector<long> rows) {
     for (const long row: rows) {
-        listCtrl->SetItem(row, COL_STATUS, "Importing...");
+        setRowStatus(row, "Importing...");
     }
     resetProgress(static_cast<int>(selection.size()));
     setBusy(true);
@@ -745,7 +858,7 @@ void Frame::runImport(config cfg, std::vector<layer> selection, std::vector<long
             setBusy(false);
             if (!errorMsg.empty()) {
                 for (const long row: rows) {
-                    listCtrl->SetItem(row, COL_STATUS, "");
+                    setRowStatus(row, "");
                 }
                 SetStatusText("Import failed");
                 wxMessageBox("Could not connect to PostgreSQL:\n" + errorMsg,
@@ -756,13 +869,14 @@ void Frame::runImport(config cfg, std::vector<layer> selection, std::vector<long
             for (size_t k = 0; k < rows.size() && k < result.size(); k++) {
                 const layer &l = result[k];
                 const long row = rows[k];
+                rowData[layerIndexAt(row)].l.error = l.error;
                 listCtrl->SetItem(row, COL_ERROR, l.error);
                 if (l.error.empty()) {
-                    listCtrl->SetItem(row, COL_STATUS, "Imported");
+                    setRowStatus(row, "Imported");
                     listCtrl->SetItemTextColour(row, wxNullColour);
                 } else {
                     failed++;
-                    listCtrl->SetItem(row, COL_STATUS, "Failed");
+                    setRowStatus(row, "Failed");
                     listCtrl->SetItemTextColour(row, *wxRED);
                 }
             }
