@@ -15,6 +15,8 @@
 #include <sstream>
 #include <string>
 #include <memory>
+#include <algorithm>
+#include <cctype>
 #include "ogrsf_frmts.h"
 #include "thread_pool.hpp"
 #include "gdal_utils.h"
@@ -92,35 +94,13 @@ namespace ogr2postgis {
 
     /**
      *
-     * @param a
-     * @param b
+     * @param s
      * @return
      */
-    inline bool caseInsCharCompareN(char a, char b);
-
-    /**
-     *
-     * @param s1
-     * @param s2
-     * @return
-     */
-    inline bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
-        for (std::string text: s2) {
-            if (s1.size() == text.size() && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     *
-     * @param a
-     * @param b
-     * @return
-     */
-    inline bool caseInsCharCompareN(char a, char b) {
-        return toupper(a) == toupper(b);
+    inline std::string toLower(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](const unsigned char c) { return std::tolower(c); });
+        return s;
     }
 
     inline std::string getGeomType(int t) {
@@ -430,42 +410,41 @@ namespace ogr2postgis {
             ".gdb", ".fgb", ".csv", ".txt"
         };
 
-        // 1) shared vector + mutex
         std::vector<std::pair<std::string, std::string> > fileEntries;
-        std::mutex entriesMtx;
 
-        // 2) recursive scan function
-        std::function<void(const std::string &)> scanDirectory =
-                [&](const std::string &dirPath) {
-            for (auto &p: std::filesystem::directory_iterator(dirPath)) {
-                if (p.is_directory()) {
-                    // schedule a new scan task
-                    pool.push_task(scanDirectory, p.path().string());
-                } else {
-                    auto ext = p.path().extension().string();
-                    if (caseInsCompare(ext, extensions)) {
-                        // record file + its extension
-                        std::lock_guard lock(entriesMtx);
-                        fileEntries.emplace_back(p.path().string(), ext);
+        // Sequential, exception-free scan. Directory symlinks are not followed,
+        // unreadable entries are skipped and .gdb directories are recorded as
+        // datasets instead of being descended into.
+        auto scanDirectory = [&](const std::string &root) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+            for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                std::string ext = toLower(it->path().extension().string());
+                std::error_code typeEc;
+                if (it->is_directory(typeEc)) {
+                    if (ext == ".gdb") {
+                        fileEntries.emplace_back(it->path().string(), ext);
+                        it.disable_recursion_pending();
                     }
+                } else if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end()) {
+                    fileEntries.emplace_back(it->path().string(), ext);
                 }
             }
         };
 
-        // 3) kick off the scans (or just treat files/.gdb specially)
         for (const std::string &path: paths) {
-            if (std::filesystem::is_regular_file(path)) {
-                // If it's a file, add to fileEntries
-                fileEntries.emplace_back(path, std::filesystem::path(path).extension().string());
-            } else if (path.find(".gdb") != std::string::npos) {
-                // Handle .gdb case
-                fileEntries.emplace_back(path, "");
+            std::error_code ec;
+            const std::string ext = toLower(std::filesystem::path(path).extension().string());
+            if (std::filesystem::is_regular_file(path, ec)) {
+                // An explicitly given file is recorded regardless of extension
+                fileEntries.emplace_back(path, ext);
+            } else if (ext == ".gdb") {
+                fileEntries.emplace_back(path, ext);
             } else {
-                // Otherwise, process the directory
-                pool.push_task(scanDirectory, path);
+                scanDirectory(path);
             }
         }
-        pool.wait_for_tasks();
 
         // tell caller what we found
         std::vector<std::string> fileNamesOnly;
