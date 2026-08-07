@@ -144,7 +144,7 @@ namespace ogr2postgis {
      */
     void
     translate(const config &config, layer l, const std::string &encoding, int index, bool first,
-              const std::function<void (layer l)> &callback, GDALDatasetH pgDs);
+              const std::function<void(layer)> &callback, GDALDatasetH pgDs);
 
     /**
      *
@@ -183,7 +183,7 @@ namespace ogr2postgis {
      * @param callback
      */
     inline void openSource(std::string &file, const std::string &extension,
-                           const std::function<void (layer l)> &callback) {
+                           const std::function<void(layer)> &callback) {
         layer l = {
             "", 0, "", "", "", file, "",
             "", 0, "", false
@@ -331,10 +331,10 @@ namespace ogr2postgis {
      */
     inline void runImport(
         const config &config,
-        const std::function<void ((std::vector<layer> layers))> &callback3,
-        const std::function<void ((layer l))> &callback4
+        const std::function<void(std::vector<layer>)> &callback3,
+        const std::function<void(layer)> &callback4
     ) {
-        setenv("PGCLIENTENCODING", "UTF8", 1);
+        //setenv("PGCLIENTENCODING", "UTF8", 1);
         GDALDatasetPtr pgDsUTF8(
             static_cast<GDALDataset *>(
                 GDALOpenEx(config.connection.c_str(),
@@ -375,8 +375,8 @@ namespace ogr2postgis {
     inline std::vector<layer> importLayers(
         const config &config,
         std::vector<layer> selection,
-        const std::function<void ((std::vector<layer> layers))> &callback3,
-        const std::function<void ((layer l))> &callback4
+        const std::function<void(std::vector<layer>)> &callback3,
+        const std::function<void(layer)> &callback4
     ) {
         GDALAllRegister();
         layers = std::move(selection);
@@ -397,10 +397,10 @@ namespace ogr2postgis {
     inline std::vector<layer> start(
         config &config,
         const std::vector<std::string> &paths,
-        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
-        const std::function<void ((layer l))> &callback2,
-        const std::function<void ((std::vector<layer> layers))> &callback3,
-        const std::function<void ((layer l))> &callback4
+        const std::function<void(std::vector<std::string>)> &callback1,
+        const std::function<void(layer)> &callback2,
+        const std::function<void(std::vector<layer>)> &callback3,
+        const std::function<void(layer)> &callback4
     ) {
         GDALAllRegister();
         layers.clear();
@@ -481,17 +481,17 @@ namespace ogr2postgis {
     inline std::vector<layer> start(
         config &config,
         const std::string &path,
-        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
-        const std::function<void ((layer l))> &callback2,
-        const std::function<void ((std::vector<layer> layers))> &callback3,
-        const std::function<void ((layer l))> &callback4
+        const std::function<void(std::vector<std::string>)> &callback1,
+        const std::function<void(layer)> &callback2,
+        const std::function<void(std::vector<layer>)> &callback3,
+        const std::function<void(layer)> &callback4
     ) {
         return start(config, std::vector<std::string>{path}, callback1, callback2, callback3, callback4);
     }
 
     inline void
     translate(const config &config, layer l, const std::string &encoding, const int index, const bool first,
-              const std::function<void (layer l)> &callback, GDALDatasetH pgDs) {
+              const std::function<void(layer)> &callback, GDALDatasetH pgDs) {
         char **argv{nullptr};
         std::string altName = l.layerName;
         std::string env = "PGCLIENTENCODING=" + encoding;
