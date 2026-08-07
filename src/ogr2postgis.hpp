@@ -15,6 +15,8 @@
 #include <sstream>
 #include <string>
 #include <memory>
+#include <algorithm>
+#include <cctype>
 #include "ogrsf_frmts.h"
 #include "thread_pool.hpp"
 #include "gdal_utils.h"
@@ -92,35 +94,13 @@ namespace ogr2postgis {
 
     /**
      *
-     * @param a
-     * @param b
+     * @param s
      * @return
      */
-    inline bool caseInsCharCompareN(char a, char b);
-
-    /**
-     *
-     * @param s1
-     * @param s2
-     * @return
-     */
-    inline bool caseInsCompare(const std::string &s1, const std::vector<std::string> &s2) {
-        for (std::string text: s2) {
-            if (s1.size() == text.size() && equal(s1.begin(), s1.end(), text.begin(), caseInsCharCompareN)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     *
-     * @param a
-     * @param b
-     * @return
-     */
-    inline bool caseInsCharCompareN(char a, char b) {
-        return toupper(a) == toupper(b);
+    inline std::string toLower(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](const unsigned char c) { return std::tolower(c); });
+        return s;
     }
 
     inline std::string getGeomType(int t) {
@@ -218,7 +198,7 @@ namespace ogr2postgis {
             f = file;
         }
 
-        std::mutex open_mtx;
+        static std::mutex open_mtx;
 
         GDALDatasetPtr poDS(
             static_cast<GDALDataset *>(GDALOpenEx(
@@ -342,9 +322,72 @@ namespace ogr2postgis {
     }
 
     /**
+     * Imports the global `layers` vector into PostgreSQL. The PG datasource is
+     * opened from config.connection; throws std::runtime_error if that fails.
      *
      * @param config
-     * @param path
+     * @param callback3
+     * @param callback4
+     */
+    inline void runImport(
+        const config &config,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        setenv("PGCLIENTENCODING", "UTF8", 1);
+        GDALDatasetPtr pgDsUTF8(
+            static_cast<GDALDataset *>(
+                GDALOpenEx(config.connection.c_str(),
+                           GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
+                           nullptr, nullptr, nullptr
+                )
+            ),
+            &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
+        );
+
+        // Safely operate on GDAL datasets
+        if (pgDsUTF8 == nullptr) {
+            throw std::runtime_error("Failed to open GDAL dataset");
+        }
+        if (callback3) callback3(layers);
+        int i{0};
+        for (const layer &l: layers) {
+            if (l.error.empty()) {
+                pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDsUTF8.get());
+            } else if (callback4) {
+                callback4(l);
+            }
+            i++;
+        }
+        pool.wait_for_tasks();
+    }
+
+    /**
+     * Imports an explicit selection of previously analyzed layers into
+     * PostgreSQL. Returns the layers with any import errors filled in.
+     *
+     * @param config
+     * @param selection
+     * @param callback3
+     * @param callback4
+     * @return
+     */
+    inline std::vector<layer> importLayers(
+        const config &config,
+        std::vector<layer> selection,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        GDALAllRegister();
+        layers = std::move(selection);
+        runImport(config, callback3, callback4);
+        return layers;
+    }
+
+    /**
+     *
+     * @param config
+     * @param paths
      * @param callback1
      * @param callback2
      * @param callback3
@@ -353,52 +396,54 @@ namespace ogr2postgis {
      */
     inline std::vector<layer> start(
         config &config,
-        const std::string &path,
-        const std::function<void (std::vector<std::string> fileNames)> &callback1,
-        const std::function<void (layer l)> &callback2,
-        const std::function<void (std::vector<layer> layers)> &callback3,
-        const std::function<void (layer l)> &callback4
+        const std::vector<std::string> &paths,
+        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
+        const std::function<void ((layer l))> &callback2,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
     ) {
         GDALAllRegister();
+        layers.clear();
 
         static const std::vector<std::string> extensions{
             ".tab", ".shp", ".gml", ".geojson", ".gpkg",
             ".gdb", ".fgb", ".csv", ".txt"
         };
 
-        // 1) shared vector + mutex
         std::vector<std::pair<std::string, std::string> > fileEntries;
-        std::mutex entriesMtx;
 
-        // 2) recursive scan function
-        std::function<void(const std::string &)> scanDirectory =
-                [&](const std::string &dirPath) {
-            for (auto &p: std::filesystem::directory_iterator(dirPath)) {
-                if (p.is_directory()) {
-                    // schedule a new scan task
-                    pool.push_task(scanDirectory, p.path().string());
-                } else {
-                    auto ext = p.path().extension().string();
-                    if (caseInsCompare(ext, extensions)) {
-                        // record file + its extension
-                        std::lock_guard lock(entriesMtx);
-                        fileEntries.emplace_back(p.path().string(), ext);
+        // Sequential, exception-free scan. Directory symlinks are not followed,
+        // unreadable entries are skipped and .gdb directories are recorded as
+        // datasets instead of being descended into.
+        auto scanDirectory = [&](const std::string &root) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+            for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                std::string ext = toLower(it->path().extension().string());
+                std::error_code typeEc;
+                if (it->is_directory(typeEc)) {
+                    if (ext == ".gdb") {
+                        fileEntries.emplace_back(it->path().string(), ext);
+                        it.disable_recursion_pending();
                     }
+                } else if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end()) {
+                    fileEntries.emplace_back(it->path().string(), ext);
                 }
             }
         };
 
-        // 3) kick off the first scan (or just treat .gdb specially)
-        if (std::filesystem::is_regular_file(path)) {
-            // If it's a file, add to fileEntries
-            fileEntries.emplace_back(path, std::filesystem::path(path).extension().string());
-        } else if (path.find(".gdb") != std::string::npos) {
-            // Handle .gdb case
-            fileEntries.emplace_back(path, "");
-        } else {
-            // Otherwise, process the directory
-            pool.push_task(scanDirectory, path);
-            pool.wait_for_tasks();
+        for (const std::string &path: paths) {
+            std::error_code ec;
+            const std::string ext = toLower(std::filesystem::path(path).extension().string());
+            if (std::filesystem::is_regular_file(path, ec)) {
+                // An explicitly given file is recorded regardless of extension
+                fileEntries.emplace_back(path, ext);
+            } else if (ext == ".gdb") {
+                fileEntries.emplace_back(path, ext);
+            } else {
+                scanDirectory(path);
+            }
         }
 
         // tell caller what we found
@@ -415,37 +460,33 @@ namespace ogr2postgis {
         }
         pool.wait_for_tasks();
 
-        int i{0};
         // Import in PostGIS
         if (config.import) {
-          //  setenv("PGCLIENTENCODING", "UTF8", 1);
-            GDALDatasetPtr pgDsUTF8(
-                static_cast<GDALDataset *>(
-                    GDALOpenEx(config.connection.c_str(),
-                               GDAL_OF_UPDATE | GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR,
-                               nullptr, nullptr, nullptr
-                    )
-                ),
-                &GDALClose // ← this calls GDALClose(ptr.get()) when the unique_ptr goes out of scope
-            );
-
-            // Safely operate on GDAL datasets
-            if (pgDsUTF8 == nullptr) {
-                throw std::runtime_error("Failed to open GDAL dataset");
-            }
-            callback3(layers);
-            for (const layer &l: layers) {
-                if (l.error.empty()) {
-                    pool.push_task(translate, config, l, "UTF8", i, true, callback4, pgDsUTF8.get());
-                } else {
-                    callback4(l);
-                }
-                i++;
-            };
-            pool.wait_for_tasks();
+            runImport(config, callback3, callback4);
         }
         OGRCleanupAll();
         return layers;
+    }
+
+    /**
+     *
+     * @param config
+     * @param path
+     * @param callback1
+     * @param callback2
+     * @param callback3
+     * @param callback4
+     * @return
+     */
+    inline std::vector<layer> start(
+        config &config,
+        const std::string &path,
+        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
+        const std::function<void ((layer l))> &callback2,
+        const std::function<void ((std::vector<layer> layers))> &callback3,
+        const std::function<void ((layer l))> &callback4
+    ) {
+        return start(config, std::vector<std::string>{path}, callback1, callback2, callback3, callback4);
     }
 
     inline void
