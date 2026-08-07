@@ -83,7 +83,7 @@ private:
         std::cout << "Click" << std::endl;
         int col = event.GetColumn();
         // You can implement your own sorting logic here based on the clicked column
-        listCtrl->SortItems(&CompareFunction, col);
+        listCtrl->SortItems(wxListCtrlCompare(&CompareFunction), col);
         // Update the list control
         listCtrl->Refresh();
     }

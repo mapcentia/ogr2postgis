@@ -1,34 +1,22 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.28)
 project(ogr2postgis)
-
-#add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g -O1)      # compile‑time
-#add_link_options(-fsanitize=address,undefined   )                               # link‑time
 
 set(CMAKE_CXX_STANDARD 23)
 
-set(CPACK_GENERATOR "DEB")  # or "RPM" for RPM-based systems
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Martin Høgh")  # or "RPM" for RPM-based systems
-set(CPACK_PACKAGE_CONTACT "mh@mapcentia.com")  # or "RPM" for RPM-based systems
-
-include(CPack)
-
-# Specify the wx-config executable if not in the default system path
-set(wxWidgets_CONFIG_EXECUTABLE "/usr/bin/wx-config")
-
-include_directories(../../../../usr/include/gdal)
-
-find_package(wxWidgets REQUIRED COMPONENTS core base)
-find_package(OpenSSL REQUIRED)
+find_package(GDAL CONFIG REQUIRED)
+find_package(wxWidgets COMPONENTS gl core base REQUIRED)
 
 include(${wxWidgets_USE_FILE})
 
 add_executable(ogr2postgis src/ogr2postgis.cpp)
 add_executable(ogr2postgis_gui src/ogr2postgis_gui.cpp)
 
-target_link_libraries(ogr2postgis gdal pthread stdc++fs )
-target_link_libraries(ogr2postgis_gui ${wxWidgets_LIBRARIES} gdal pthread stdc++fs)
+target_compile_definitions(ogr2postgis_gui PRIVATE wxUSE_RC_MANIFEST=1 ${wxWidgets_DEFINITIONS} "$<$<CONFIG:DEBUG>:${wxWidgets_DEFINITIONS_DEBUG}>")
+target_include_directories(ogr2postgis_gui PRIVATE ${wxWidgets_INCLUDE_DIRS})
 
-install(TARGETS ogr2postgis DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(TARGETS ogr2postgis_gui DESTINATION ${CMAKE_INSTALL_BINDIR})
+target_link_libraries(ogr2postgis GDAL::GDAL)
+target_link_libraries(ogr2postgis_gui ${wxWidgets_LIBRARIES} GDAL::GDAL)
+
+set_target_properties(ogr2postgis_gui PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 
 

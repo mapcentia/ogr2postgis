@@ -18,7 +18,7 @@
 #include "ogrsf_frmts.h"
 #include "thread_pool.hpp"
 #include "gdal_utils.h"
-
+#include "gdal_rat.h"
 
 namespace ogr2postgis {
     inline BS::thread_pool pool;
@@ -164,7 +164,7 @@ namespace ogr2postgis {
      */
     void
     translate(const config &config, layer l, const std::string &encoding, int index, bool first,
-              const std::function<void ((layer l))> &callback, GDALDatasetH pgDs);
+              const std::function<void (layer l)> &callback, GDALDatasetH pgDs);
 
     /**
      *
@@ -203,7 +203,7 @@ namespace ogr2postgis {
      * @param callback
      */
     inline void openSource(std::string &file, const std::string &extension,
-                           const std::function<void ((layer l))> &callback) {
+                           const std::function<void (layer l)> &callback) {
         layer l = {
             "", 0, "", "", "", file, "",
             "", 0, "", false
@@ -354,10 +354,10 @@ namespace ogr2postgis {
     inline std::vector<layer> start(
         config &config,
         const std::string &path,
-        const std::function<void ((std::vector<std::string> fileNames))> &callback1,
-        const std::function<void ((layer l))> &callback2,
-        const std::function<void ((std::vector<layer> layers))> &callback3,
-        const std::function<void ((layer l))> &callback4
+        const std::function<void (std::vector<std::string> fileNames)> &callback1,
+        const std::function<void (layer l)> &callback2,
+        const std::function<void (std::vector<layer> layers)> &callback3,
+        const std::function<void (layer l)> &callback4
     ) {
         GDALAllRegister();
 
@@ -418,7 +418,7 @@ namespace ogr2postgis {
         int i{0};
         // Import in PostGIS
         if (config.import) {
-            setenv("PGCLIENTENCODING", "UTF8", 1);
+          //  setenv("PGCLIENTENCODING", "UTF8", 1);
             GDALDatasetPtr pgDsUTF8(
                 static_cast<GDALDataset *>(
                     GDALOpenEx(config.connection.c_str(),
@@ -450,7 +450,7 @@ namespace ogr2postgis {
 
     inline void
     translate(const config &config, layer l, const std::string &encoding, const int index, const bool first,
-              const std::function<void ((layer l))> &callback, GDALDatasetH pgDs) {
+              const std::function<void (layer l)> &callback, GDALDatasetH pgDs) {
         char **argv{nullptr};
         std::string altName = l.layerName;
         std::string env = "PGCLIENTENCODING=" + encoding;
@@ -587,7 +587,7 @@ namespace ogr2postgis {
         if (myctx.error && first) {
             layers[index].error = "";
 
-            setenv("PGCLIENTENCODING", config.fallbackEncoding.c_str(), 1);
+            //setenv("PGCLIENTENCODING", config.fallbackEncoding.c_str(), 1);
             GDALDatasetPtr pgDsFallbackEncoding(
                 static_cast<GDALDataset *>(
                     GDALOpenEx(config.connection.c_str(),
