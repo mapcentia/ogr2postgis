@@ -42,6 +42,13 @@ else()
     message(STATUS "GDAL/PROJ data directories not found next to GDAL_DIR; relying on compiled-in paths")
 endif()
 
+# Bundle the Visual C++ runtime (vcruntime140.dll, msvcp140.dll, ...) so end
+# users do not need the VC++ Redistributable installed.
+if(MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+    include(InstallRequiredSystemLibraries)
+endif()
+
 install(TARGETS ogr2postgis ogr2postgis_gui
         RUNTIME_DEPENDENCY_SET ogr2postgis_runtime_deps
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
