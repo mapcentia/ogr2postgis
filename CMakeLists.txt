@@ -20,6 +20,51 @@ target_link_libraries(ogr2postgis_gui ${wxWidgets_LIBRARIES} GDAL::GDAL)
 
 set_target_properties(ogr2postgis_gui PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 
+# Code signing (optional). Select the certificate with one of:
+#   CODESIGN_CERT_SUBJECT     subject name in the Windows certificate store (signtool /n)
+#   CODESIGN_CERT_THUMBPRINT  SHA1 thumbprint in the Windows certificate store (signtool /sha1)
+#   CODESIGN_PFX              .pfx file, optionally with CODESIGN_PFX_PASSWORD (signtool /f)
+# When one of them is set the executables are signed after linking and the
+# installer after packaging (see cmake/SignPackage.cmake). Otherwise signing
+# is skipped. Example:
+#   cmake -B build -DCODESIGN_CERT_SUBJECT="MapCentia ApS"
+set(CODESIGN_CERT_SUBJECT "" CACHE STRING "Subject name of the code signing certificate in the Windows certificate store")
+set(CODESIGN_CERT_THUMBPRINT "" CACHE STRING "SHA1 thumbprint of the code signing certificate in the Windows certificate store")
+set(CODESIGN_PFX "" CACHE FILEPATH "Code signing certificate as .pfx file")
+set(CODESIGN_PFX_PASSWORD "" CACHE STRING "Password for CODESIGN_PFX")
+set(CODESIGN_TIMESTAMP_URL "http://timestamp.digicert.com" CACHE STRING "RFC 3161 timestamp server")
+
+set(CODESIGN_COMMAND "")
+if(WIN32 AND (CODESIGN_CERT_SUBJECT OR CODESIGN_CERT_THUMBPRINT OR CODESIGN_PFX))
+    set(_pf86 "ProgramFiles(x86)") # parentheses are not allowed directly in $ENV{}
+    file(GLOB _sdk_bin_dirs LIST_DIRECTORIES true "$ENV{${_pf86}}/Windows Kits/10/bin/10.*/x64")
+    list(SORT _sdk_bin_dirs ORDER DESCENDING)
+    find_program(SIGNTOOL_EXECUTABLE signtool HINTS "$ENV{WindowsSdkVerBinPath}/x64" ${_sdk_bin_dirs})
+    if(NOT SIGNTOOL_EXECUTABLE)
+        message(FATAL_ERROR "Code signing requested but signtool.exe was not found. Install the Windows SDK.")
+    endif()
+    set(CODESIGN_COMMAND "${SIGNTOOL_EXECUTABLE}" sign /fd SHA256 /td SHA256
+            /tr "${CODESIGN_TIMESTAMP_URL}" /d "${PROJECT_NAME}")
+    if(CODESIGN_CERT_SUBJECT)
+        list(APPEND CODESIGN_COMMAND /n "${CODESIGN_CERT_SUBJECT}")
+    elseif(CODESIGN_CERT_THUMBPRINT)
+        list(APPEND CODESIGN_COMMAND /sha1 "${CODESIGN_CERT_THUMBPRINT}")
+    else()
+        list(APPEND CODESIGN_COMMAND /f "${CODESIGN_PFX}")
+        if(CODESIGN_PFX_PASSWORD)
+            list(APPEND CODESIGN_COMMAND /p "${CODESIGN_PFX_PASSWORD}")
+        endif()
+    endif()
+    foreach(tgt ogr2postgis ogr2postgis_gui)
+        add_custom_command(TARGET ${tgt} POST_BUILD
+                COMMAND ${CODESIGN_COMMAND} "$<TARGET_FILE:${tgt}>"
+                COMMENT "Signing ${tgt}")
+    endforeach()
+    message(STATUS "Code signing enabled with ${SIGNTOOL_EXECUTABLE}")
+else()
+    message(STATUS "Code signing disabled (set CODESIGN_CERT_SUBJECT, CODESIGN_CERT_THUMBPRINT or CODESIGN_PFX to enable)")
+endif()
+
 # GDAL and PROJ from vcpkg have no compiled-in data path on Windows. Ship their
 # data directories as "gdal-data" and "proj" next to the executables; the
 # programs point GDAL/PROJ at them on startup (see configureDataPaths()).
@@ -74,6 +119,10 @@ set(CPACK_GENERATOR "NSIS;ZIP")
 set(CPACK_NSIS_PACKAGE_NAME "${PROJECT_NAME}")
 set(CPACK_NSIS_DISPLAY_NAME "${PROJECT_NAME}")
 set(CPACK_NSIS_MODIFY_PATH ON)
+
+# Sign the generated installer after CPack has built it.
+set(CPACK_CODESIGN_COMMAND "${CODESIGN_COMMAND}")
+set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignPackage.cmake")
 
 include(CPack)
 
