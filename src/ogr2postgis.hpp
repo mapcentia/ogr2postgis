@@ -475,7 +475,7 @@ namespace ogr2postgis {
 
         static const std::vector<std::string> extensions{
             ".tab", ".shp", ".gml", ".geojson", ".gpkg",
-            ".gdb", ".fgb", ".csv", ".txt"
+            ".gdb", ".fgb", ".parquet", ".csv", ".txt"
         };
 
         std::vector<std::pair<std::string, std::string> > fileEntries;
