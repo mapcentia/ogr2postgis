@@ -35,6 +35,7 @@ ProgressBar importBar{
 };
 
 int main(int argc, char *argv[]) {
+    configureDataPaths();
     ArgumentParser program("ogr2postgis", "2022.5.0");
     program.add_argument("-o", "--schema").help("Output PostgreSQL schema.").default_value(
         std::string{"public"});

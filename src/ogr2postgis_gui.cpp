@@ -542,6 +542,7 @@ private:
 
 bool App::OnInit() {
     SetAppName("ogr2postgis");
+    configureDataPaths();
     auto *frame = new Frame();
     frame->Show(true);
     return true;

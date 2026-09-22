@@ -21,6 +21,17 @@
 #include "thread_pool.hpp"
 #include "gdal_utils.h"
 #include "gdal_rat.h"
+#include "ogr_srs_api.h"
+#include <cstdlib>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace ogr2postgis {
     inline BS::thread_pool pool;
@@ -68,6 +79,53 @@ namespace ogr2postgis {
     // Define a smart pointer for GDALDataset with a custom deleter
     using GDALDatasetPtr = std::unique_ptr<GDALDataset, decltype(&GDALClose)>;
 
+    /**
+     * Returns the directory containing the running executable, or an empty
+     * path if it cannot be determined.
+     */
+    inline std::filesystem::path executableDir() {
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH];
+        const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) return {};
+        return std::filesystem::path(buf).parent_path();
+#else
+        std::error_code ec;
+        const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (ec) return {};
+        return exe.parent_path();
+#endif
+    }
+
+    /**
+     * Points GDAL and PROJ at the data directories shipped next to the
+     * executable ("gdal-data" and "proj"). Windows builds of GDAL/PROJ have no
+     * compiled-in data path, so without this GML files cannot be parsed and
+     * EPSG codes cannot be resolved. GDAL_DATA and PROJ_DATA/PROJ_LIB set in
+     * the environment take precedence. Must be called before GDALAllRegister().
+     */
+    inline void configureDataPaths() {
+        const std::filesystem::path exeDir = executableDir();
+        if (exeDir.empty()) return;
+        std::error_code ec;
+
+        if (CPLGetConfigOption("GDAL_DATA", nullptr) == nullptr) {
+            const auto gdalData = exeDir / "gdal-data";
+            if (std::filesystem::is_directory(gdalData, ec)) {
+                CPLSetConfigOption("GDAL_DATA", gdalData.string().c_str());
+            }
+        }
+
+        if (std::getenv("PROJ_DATA") == nullptr && std::getenv("PROJ_LIB") == nullptr) {
+            const auto projData = exeDir / "proj";
+            if (std::filesystem::is_directory(projData, ec)) {
+                const std::string dir = projData.string();
+                const char *paths[] = {dir.c_str(), nullptr};
+                OSRSetPROJSearchPaths(paths);
+            }
+        }
+    }
+
     // Note: On POSIX systems, gmtime_r is thread-safe.
     // On Windows, you might need to use gmtime_s.
     inline std::string getCurrentTimestamp() {
@@ -103,29 +161,33 @@ namespace ogr2postgis {
         return s;
     }
 
+    /**
+     * Maps an OGR geometry type to the PostGIS type name used for -nlt. Z/M
+     * flags are stripped and ISO curve types map to their linear counterparts,
+     * which ogr2ogr linearizes on import.
+     */
     inline std::string getGeomType(int t) {
-        std::string type;
-        switch (t) {
-            case 1:
-                type = "point";
-                break;
-            case 2:
-                type = "linestring";
-                break;
-            case 3:
-                type = "polygon";
-                break;
-            case 4:
-                type = "multipoint";
-                break;
-            case 5:
-                type = "multilinestring";
-                break;
-            case 6:
-                type = "multipolygon";
-            default: ;
+        switch (wkbFlatten(t)) {
+            case wkbPoint:
+                return "point";
+            case wkbLineString:
+            case wkbCircularString:
+            case wkbCompoundCurve:
+                return "linestring";
+            case wkbPolygon:
+            case wkbCurvePolygon:
+                return "polygon";
+            case wkbMultiPoint:
+                return "multipoint";
+            case wkbMultiLineString:
+            case wkbMultiCurve:
+                return "multilinestring";
+            case wkbMultiPolygon:
+            case wkbMultiSurface:
+                return "multipolygon";
+            default:
+                return "";
         }
-        return type;
     }
 
     constexpr int maxFeatures{1000};
@@ -153,6 +215,7 @@ namespace ogr2postgis {
      * @param msg
      */
     static void pgErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
+        if (e < CE_Failure) return; // Debug and warning messages are not errors
         std::string str(msg);
         std::erase(str, '\n');
         ctx *myctx = static_cast<ctx *>(CPLGetErrorHandlerUserData());
@@ -171,9 +234,9 @@ namespace ogr2postgis {
      * @param msg
      */
     static void openErrorHandler(CPLErr e, CPLErrorNum n, const char *msg) {
-        std::string str(msg);
+        if (e < CE_Failure) return; // Debug and warning messages are not errors
         auto *l = static_cast<layer *>(CPLGetErrorHandlerUserData());
-        l->error = str;
+        l->error = std::string(msg);
     }
 
     /**
@@ -214,38 +277,48 @@ namespace ogr2postgis {
         if (!l.error.empty() || poDS == nullptr) {
             l.error = !l.error.empty() ? l.error : "Unable to open file";
             std::lock_guard<std::mutex> lock(open_mtx);
-            layers.emplace_back(std::move(l));
             callback(l);
+            layers.emplace_back(std::move(l));
             CPLPopErrorHandler();
             return;
         }
-        const OGRSpatialReference *projection;
-        char *wktString{nullptr};
-        const char *authorityName;
-        const char *authorityCode;
-        std::string authStr;
         int layerCount{poDS->GetLayerCount()};
-        std::string hasWkt{"True"};
-        std::string layerName;
         std::string driverName{poDS->GetDriverName()};
         for (int i = 0; i < layerCount; i++) {
             OGRLayer *layer{poDS->GetLayer(i)};
+            std::string hasWkt{"True"};
+            std::string authStr{"-"};
+            std::string wktString;
+            OGRSpatialReference featureSrs;
             const OGRSpatialReference *reference = layer->GetSpatialRef();
+            if (reference == nullptr) {
+                // Some formats (e.g. GML with srsName only on the geometries)
+                // carry the CRS on the features rather than on the layer.
+                layer->ResetReading();
+                if (OGRFeature *first = layer->GetNextFeature(); first != nullptr) {
+                    const OGRGeometry *g = first->GetGeometryRef();
+                    if (g != nullptr && g->getSpatialReference() != nullptr) {
+                        featureSrs = *g->getSpatialReference();
+                        reference = &featureSrs;
+                    }
+                    OGRFeature::DestroyFeature(first);
+                }
+                layer->ResetReading();
+            }
             if (reference != nullptr) {
-                projection = layer->GetLayerDefn()->OGRFeatureDefn::GetGeomFieldDefn(0)->GetSpatialRef();
-                projection->exportToWkt(&wktString);
-                authorityName = projection->GetAuthorityName(nullptr);
-                authorityCode = projection->GetAuthorityCode(nullptr);
+                char *wkt{nullptr};
+                reference->exportToWkt(&wkt);
+                if (wkt != nullptr) {
+                    wktString = wkt;
+                    CPLFree(wkt);
+                }
+                const char *authorityName = reference->GetAuthorityName(nullptr);
+                const char *authorityCode = reference->GetAuthorityCode(nullptr);
                 if (authorityName != nullptr && authorityCode != nullptr) {
-                    authStr = std::string(authorityName) + ":" + std::string(authorityCode);
-                } else {
-                    authStr = "-";
+                    authStr = std::string(authorityName) + ":" + authorityCode;
                 }
             } else {
-                authorityName = "";
-                authorityCode = "Na";
                 hasWkt = "False";
-                authStr = "-";
             }
             // Count features
             GIntBig featureCount = layer->GetFeatureCount(1);
@@ -305,17 +378,12 @@ namespace ogr2postgis {
             }
 
             l = {
-                driverName, featureCount, type, poDS->GetLayer(i)->GetName(), hasWkt, file,
-                wktString == nullptr ? "" : std::string(wktString),
-                authStr, i, "", singleMultiMixed
+                driverName, featureCount, type, layer->GetName(), hasWkt, file,
+                wktString, authStr, i, "", singleMultiMixed
             }; {
                 std::lock_guard<std::mutex> lock(open_mtx);
                 callback(l);
                 layers.emplace_back(std::move(l));
-            }
-            if (wktString != nullptr) {
-                CPLFree(wktString);
-                wktString = nullptr;
             }
         }
         CPLPopErrorHandler();
