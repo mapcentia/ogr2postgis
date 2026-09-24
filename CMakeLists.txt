@@ -18,7 +18,9 @@ target_include_directories(ogr2postgis_gui PRIVATE ${wxWidgets_INCLUDE_DIRS})
 target_link_libraries(ogr2postgis GDAL::GDAL)
 target_link_libraries(ogr2postgis_gui ${wxWidgets_LIBRARIES} GDAL::GDAL)
 
-set_target_properties(ogr2postgis_gui PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
+if(WIN32)
+    set_target_properties(ogr2postgis_gui PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
 
 # Code signing (optional). Select the certificate with one of:
 #   CODESIGN_CERT_SUBJECT     subject name in the Windows certificate store (signtool /n)
@@ -94,15 +96,22 @@ if(MSVC)
     include(InstallRequiredSystemLibraries)
 endif()
 
-install(TARGETS ogr2postgis ogr2postgis_gui
-        RUNTIME_DEPENDENCY_SET ogr2postgis_runtime_deps
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(WIN32)
+    # Bundle the vcpkg DLLs next to the executables.
+    install(TARGETS ogr2postgis ogr2postgis_gui
+            RUNTIME_DEPENDENCY_SET ogr2postgis_runtime_deps
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-install(RUNTIME_DEPENDENCY_SET ogr2postgis_runtime_deps
-        DESTINATION ${CMAKE_INSTALL_BINDIR}
-        PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
-        POST_EXCLUDE_REGEXES ".*[Ss]ystem32.*\\.dll"
-        DIRECTORIES "$<TARGET_FILE_DIR:ogr2postgis_gui>")
+    install(RUNTIME_DEPENDENCY_SET ogr2postgis_runtime_deps
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+            PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+            POST_EXCLUDE_REGEXES ".*[Ss]ystem32.*\\.dll"
+            DIRECTORIES "$<TARGET_FILE_DIR:ogr2postgis_gui>")
+else()
+    # On Linux the shared libraries come from the distribution packages.
+    install(TARGETS ogr2postgis ogr2postgis_gui
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
 set(CPACK_PACKAGE_VENDOR "ogr2postgis")
@@ -115,10 +124,17 @@ set(CPACK_BUILD_CONFIG "Release")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
-set(CPACK_GENERATOR "NSIS;ZIP")
-set(CPACK_NSIS_PACKAGE_NAME "${PROJECT_NAME}")
-set(CPACK_NSIS_DISPLAY_NAME "${PROJECT_NAME}")
-set(CPACK_NSIS_MODIFY_PATH ON)
+if(WIN32)
+    set(CPACK_GENERATOR "NSIS;ZIP")
+    set(CPACK_NSIS_PACKAGE_NAME "${PROJECT_NAME}")
+    set(CPACK_NSIS_DISPLAY_NAME "${PROJECT_NAME}")
+    set(CPACK_NSIS_MODIFY_PATH ON)
+else()
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGE_CONTACT "mh@mapcentia.com")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Martin Høgh")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+endif()
 
 # Sign the generated installer after CPack has built it.
 set(CPACK_CODESIGN_COMMAND "${CODESIGN_COMMAND}")

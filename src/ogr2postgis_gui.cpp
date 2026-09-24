@@ -543,7 +543,9 @@ private:
 bool App::OnInit() {
     SetAppName("ogr2postgis");
     // Follow the OS light/dark theme. Automatic on GTK, opt-in on Windows.
+#if wxCHECK_VERSION(3, 3, 0)
     SetAppearance(Appearance::System);
+#endif
     configureDataPaths();
     auto *frame = new Frame();
     frame->Show(true);
